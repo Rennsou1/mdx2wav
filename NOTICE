@@ -1,0 +1,91 @@
+mdx2wav
+Copyright 2014 mitsuman (@__mtm)
+Licensed under the Apache License, Version 2.0
+
+This product includes the following third-party software:
+
+================================================================================
+MXDRV / MXDRVg
+================================================================================
+
+  X68k MXDRV music driver version 2.06+17 Rel.X5-S
+  (c) 1988-92 milk., K.MAEKAWA, Missy.M, Yatsube
+
+  Converted for Win32 [MXDRVg] V1.50a
+  Copyright (C) 2000-2011 GORRY.
+
+  Location: gamdx/mxdrvg/
+
+================================================================================
+fmgen — FM Sound Generator with OPN/OPM interface
+================================================================================
+
+  Copyright (C) 1998, 2003 cisc (cisc@retropc.net)
+
+  Location: gamdx/fmgen/
+
+  License terms (from fmgen/readme.txt):
+    1. Credit the origin (author, copyright) of this software.
+    2. Distribute as free software when redistributing.
+    3. When distributing modified source code, clearly describe the modifications.
+    4. When distributing source code, include this text (readme.txt) unmodified.
+    5. Prior consent from the author is required to embed this source code
+       (in part or whole) into commercial software (shareware included).
+
+  The full original readme.txt is preserved at gamdx/fmgen/readme.txt.
+
+================================================================================
+YMFM — Yamaha FM sound cores
+================================================================================
+
+  Copyright (c) 2021, Aaron Giles
+  All rights reserved.
+
+  Location: gamdx/ymfm/
+
+  Licensed under the BSD 3-Clause License:
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+
+  1. Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+  2. Redistributions in binary form must reproduce the above copyright notice,
+     this list of conditions and the following disclaimer in the documentation
+     and/or other materials provided with the distribution.
+
+  3. Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from
+     this software without specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+Modifications
+================================================================================
+
+  Modified by Rennsou1_2006 (2026)
+
+  Changes to the original mitsuman/mdx2wav:
+    - 64-bit (MinGW64) compilation support (pointer truncation fix)
+    - YMFM YM2151 emulation engine integration
+    - PCM8A / PCM8PP driver auto-detection via MDX pre-scan
+    - Variable frequency PCM support (MXDRVp — developed by Rennsou1_2006 for PCM8PP)
+    - MAME-accurate ADPCM decoding (diff_lookup + index_shift)
+    - 16-bit / 8-bit PCM playback support (PCM8PP extended modes)
+    - OPM/PCM volume balancing (referenced from MDXWin)
+    - ReplayGain peak normalization (two-pass rendering)
+    - JSON metadata extraction (-i flag: driver type, BPM, duration)
+    - Native 62500Hz output (no resampling)
+    - Windows binary mode stdout fix

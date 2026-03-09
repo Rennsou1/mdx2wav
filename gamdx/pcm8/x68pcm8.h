@@ -1,3 +1,8 @@
+// X68PCM8 — 8-channel PCM mixer for X68000 emulation
+// Modified by Rennsou1_2006 (2026):
+//   SetDriverMode forwarding, SoftStop (Variable mode state preservation),
+//   SetVariableBaseRate/IsVariableMode/IsVariableRedirectReady APIs
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -29,6 +34,11 @@ namespace X68K
 		void Mix(Sample *buffer, int nsamples);
 		void SetVolume(int db);
 		void SetChannelMask(uint mask);
+		void SetDriverMode(int mode);  // 设置所有通道的 PCM 驱动模式
+		void SoftStop();  // 停止 ch0 播放但保留 Variable 模式状态
+		void SetVariableBaseRate(int rate_hz) { mPcm8[0].SetVariableBaseRate(rate_hz); }  // 从 PDX 元数据设置可变频率基准采样率（代理到 ch0）
+		bool IsVariableMode() const { return mPcm8[0].IsVariableMode(); }  // 查询 ch0 是否处于可变频率模式
+		bool IsVariableRedirectReady() const { return mPcm8[0].IsVariableRedirectReady(); }  // 可变频率重定向就绪查询（代理到 ch0）
 
 	private:
 		Pcm8 mPcm8[PCM8_NCH];

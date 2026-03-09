@@ -1,0 +1,12 @@
+﻿<Window x:Class="MDXWin.WFlacOut"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:MDXWin"
+        mc:Ignorable="d"
+        Title="WFlacOut" ResizeMode="NoResize" SizeToContent="WidthAndHeight" WindowStartupLocation="CenterScreen" Closed="Window_Closed">
+    <Grid>
+        <Button x:Name="CancelBtn" Content="Cancel" Padding="32,16" Margin="32,16" Click="CancelBtn_Click"/>
+    </Grid>
+</Window>

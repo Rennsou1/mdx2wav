@@ -1,5 +1,7 @@
 // MXDRVG.DLL header
 // Copyright (C) 2000 GORRY.
+// Modified by Rennsou1_2006 (2026):
+//   YMFM emulation type, PCM8 volume/Variable APIs, HasVariableMode query
 
 #ifndef __MXDRVG_H__
 #define __MXDRVG_H__
@@ -134,7 +136,7 @@ enum {
 
 enum {
 	MXDRVG_YM2151TYPE_FMGEN = 0,
-	MXDRVG_YM2151TYPE_MAME,
+	MXDRVG_YM2151TYPE_YMFM,
 };
 
 #ifndef MXDRVG_EXPORT
@@ -215,6 +217,21 @@ int MXDRVG_GetTerminated(
 MXDRVG_EXPORT
 void MXDRVG_TotalVolume(
 	int vol
+);
+
+MXDRVG_EXPORT
+void MXDRVG_SetPCM8Volume(
+	int db
+);
+
+MXDRVG_EXPORT
+void MXDRVG_SetPCM8VariableBaseRate(
+	int rate_hz
+);
+
+MXDRVG_EXPORT
+int MXDRVG_HasVariableMode(
+	void
 );
 
 MXDRVG_EXPORT

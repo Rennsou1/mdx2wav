@@ -1,0 +1,31 @@
+# 编译产物
+build/
+Debug_mingw32/
+Release_mingw32/
+*.exe
+*.obj
+*.o
+*.d
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+#文档
+PCM8PP83/
+
+# 测试用音乐文件（版权素材，不应提交）
+*.mdx
+*.pdx
+*.mus
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store

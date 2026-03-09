@@ -1,3 +1,7 @@
+// X68PCM8 — 8-channel PCM mixer implementation
+// Modified by Rennsou1_2006 (2026):
+//   SetDriverMode forwarding, SoftStop implementation
+
 #include "x68pcm8.h"
 
 namespace X68K
@@ -98,6 +102,7 @@ void X68PCM8::SetVolume(int db)
 
 // ---------------------------------------------------------------------------
 //	62500Hz用ADPCM合成処理
+//	X68000 実機: YM2151 と MSM6258 は 1:1 等比混音（MAME add_route 両方 0.50）
 //
 inline void X68PCM8::pcmset62500(Sample* buffer, int ndata) {
 	Sample* limit = buffer + ndata * 2;
@@ -107,72 +112,43 @@ inline void X68PCM8::pcmset62500(Sample* buffer, int ndata) {
 		for (int ch=0; ch<PCM8_NCH; ++ch) {
 			int pan = mPcm8[ch].GetMode();
 			int o = mPcm8[ch].GetPcm62();
-			if (o != 0x80000000) {
+			if (o != (int)0x80000000) {
+#ifdef PCM8_DEBUG
+				// 诊断: 前20个采样中每通道的详细值
+				{
+					static int pcm_diag_count = 0;
+					if (pcm_diag_count < 20 && (dest == buffer)) {
+						fprintf(stderr, "[MIX ch%d] GetPcm62=%d pan=0x%X\n", ch, o, pan);
+					}
+				}
+#endif
 				OutInpAdpcm[0] += (-(pan&1)) & o;
 				OutInpAdpcm[1] += (-((pan>>1)&1)) & o;
 			}
 		}
-		OutInpAdpcm[0] = (OutInpAdpcm[0] * mVolume) >> 8;
-		OutInpAdpcm[1] = (OutInpAdpcm[1] * mVolume) >> 8;
 
-		#define LIMITS ((1<<19)-1)
-		if ((uint32)(OutInpAdpcm[0]+LIMITS) > (uint32)(LIMITS*2)) {
-			if ((sint32)(OutInpAdpcm[0]+LIMITS) >= (sint32)(LIMITS*2)) {
-				OutInpAdpcm[0] = LIMITS;
-			} else {
-				OutInpAdpcm[0] = -LIMITS;
+#ifdef PCM8_DEBUG
+		// 诊断: 混音后总值
+		{
+			static int mix_total_diag = 0;
+			if (mix_total_diag < 20 && (dest == buffer)) {
+				fprintf(stderr, "[MIX TOTAL] L=%d R=%d mVolume=%d\n",
+					OutInpAdpcm[0], OutInpAdpcm[1], mVolume);
+				mix_total_diag++;
 			}
 		}
-		if ((uint32)(OutInpAdpcm[1]+LIMITS) > (uint32)(LIMITS*2)) {
-			if ((sint32)(OutInpAdpcm[1]+LIMITS) >= (sint32)(LIMITS*2)) {
-				OutInpAdpcm[1] = LIMITS;
-			} else {
-				OutInpAdpcm[1] = -LIMITS;
-			}
-		}
-		#undef LIMITS
-		OutInpAdpcm[0] *= 26;
-		OutInpAdpcm[1] *= 26;
+#endif
 
-		OutInpOutAdpcm[0] = (
-		  OutInpAdpcm[0] + OutInpAdpcm_prev[0] +
-		  OutInpAdpcm_prev[0] + OutInpAdpcm_prev2[0] -
-		  OutInpOutAdpcm_prev[0]*(-1537) - OutInpOutAdpcm_prev2[0]*617
-		 ) >> 10;
-		OutInpOutAdpcm[1] = (
-		  OutInpAdpcm[1] + OutInpAdpcm_prev[1] +
-		  OutInpAdpcm_prev[1] + OutInpAdpcm_prev2[1] -
-		  OutInpOutAdpcm_prev[1]*(-1537) - OutInpOutAdpcm_prev2[1]*617
-		) >> 10;
+		// mVolume=256, >> 9 で OPM とのバランス調整（実機ヒアリング結果×0.5）
+		OutInpAdpcm[0] = (OutInpAdpcm[0] * mVolume) >> 9;
+		OutInpAdpcm[1] = (OutInpAdpcm[1] * mVolume) >> 9;
 
-		OutInpAdpcm_prev2[0] = OutInpAdpcm_prev[0];
-		OutInpAdpcm_prev2[1] = OutInpAdpcm_prev[1];
-		OutInpAdpcm_prev[0] = OutInpAdpcm[0];
-		OutInpAdpcm_prev[1] = OutInpAdpcm[1];
-		OutInpOutAdpcm_prev2[0] = OutInpOutAdpcm_prev[0];
-		OutInpOutAdpcm_prev2[1] = OutInpOutAdpcm_prev[1];
-		OutInpOutAdpcm_prev[0] = OutInpOutAdpcm[0];
-		OutInpOutAdpcm_prev[1] = OutInpOutAdpcm[1];
+		// クランプ
+		OutInpAdpcm[0] = Limit(OutInpAdpcm[0], 0x7fff, -0x8000);
+		OutInpAdpcm[1] = Limit(OutInpAdpcm[1], 0x7fff, -0x8000);
 
-		OutOutInpAdpcm[0] = OutInpOutAdpcm[0] * (356);
-		OutOutInpAdpcm[1] = OutInpOutAdpcm[1] * (356);
-		OutOutAdpcm[0] = (
-		  OutOutInpAdpcm[0] + OutOutInpAdpcm_prev[0] -
-		  OutOutAdpcm_prev[0]*(-312)
-		) >> 10;
-		OutOutAdpcm[1] = (
-		  OutOutInpAdpcm[1] + OutOutInpAdpcm_prev[1] -
-		  OutOutAdpcm_prev[1]*(-312)
-		) >> 10;
-
-		OutOutInpAdpcm_prev[0] = OutOutInpAdpcm[0];
-		OutOutInpAdpcm_prev[1] = OutOutInpAdpcm[1];
-		OutOutAdpcm_prev[0] = OutOutAdpcm[0];
-		OutOutAdpcm_prev[1] = OutOutAdpcm[1];
-
-		// -2048*16〜+2048*16 OPMとADPCMの音量バランス調整
-		StoreSample(dest[0], (OutOutAdpcm[0]*506) >> (4+9));
-		StoreSample(dest[1], (OutOutAdpcm[1]*506) >> (4+9));
+		StoreSample(dest[0], OutInpAdpcm[0]);
+		StoreSample(dest[1], OutInpAdpcm[1]);
 	}
 }
 
@@ -193,56 +169,23 @@ inline void X68PCM8::pcmset22050(Sample* buffer, int ndata) {
 			for (int ch=0; ch<PCM8_NCH; ++ch) {
 				int pan = mPcm8[ch].GetMode();
 				int o = mPcm8[ch].GetPcm22();
-				if (o != 0x80000000) {
+				if (o != (int)0x80000000) {
 					OutInpAdpcm[0] += (-(pan&1)) & o;
 					OutInpAdpcm[1] += (-((pan>>1)&1)) & o;
 				}
 			}
-			OutInpAdpcm[0] = (OutInpAdpcm[0] * mVolume) >> 8;
-			OutInpAdpcm[1] = (OutInpAdpcm[1] * mVolume) >> 8;
 
-			#define LIMITS ((1<<19)-1)
-			if ((uint32)(OutInpAdpcm[0]+LIMITS) > (uint32)(LIMITS*2)) {
-				if ((sint32)(OutInpAdpcm[0]+LIMITS) >= (sint32)(LIMITS*2)) {
-					OutInpAdpcm[0] = LIMITS;
-				} else {
-					OutInpAdpcm[0] = -LIMITS;
-				}
-			}
-			if ((uint32)(OutInpAdpcm[1]+LIMITS) > (uint32)(LIMITS*2)) {
-				if ((sint32)(OutInpAdpcm[1]+LIMITS) >= (sint32)(LIMITS*2)) {
-					OutInpAdpcm[1] = LIMITS;
-				} else {
-					OutInpAdpcm[1] = -LIMITS;
-				}
-			}
-			#undef LIMITS
+			// mVolume=256, >> 9 で OPM とのバランス調整（実機ヒアリング結果×0.5）
+			OutInpAdpcm[0] = (OutInpAdpcm[0] * mVolume) >> 9;
+			OutInpAdpcm[1] = (OutInpAdpcm[1] * mVolume) >> 9;
 
-			OutInpAdpcm[0] *= 40;
-			OutInpAdpcm[1] *= 40;
+			// クランプ
+			OutInpAdpcm[0] = Limit(OutInpAdpcm[0], 0x7fff, -0x8000);
+			OutInpAdpcm[1] = Limit(OutInpAdpcm[1], 0x7fff, -0x8000);
 		}
-		OutOutAdpcm[0] = (
-		  OutInpAdpcm[0] + OutInpAdpcm_prev[0] +
-		  OutInpAdpcm_prev[0] + OutInpAdpcm_prev2[0] -
-		  OutOutAdpcm_prev[0]*(-157) - OutOutAdpcm_prev2[0]*61
-		 ) >> 8;
-		OutOutAdpcm[1] = (
-		  OutInpAdpcm[1] + OutInpAdpcm_prev[1] +
-		  OutInpAdpcm_prev[1] + OutInpAdpcm_prev2[1] -
-		  OutOutAdpcm_prev[1]*(-157) - OutOutAdpcm_prev2[1]*61
-		) >> 8;
 
-		OutInpAdpcm_prev2[0] = OutInpAdpcm_prev[0];
-		OutInpAdpcm_prev2[1] = OutInpAdpcm_prev[1];
-		OutInpAdpcm_prev[0] = OutInpAdpcm[0];
-		OutInpAdpcm_prev[1] = OutInpAdpcm[1];
-		OutInpOutAdpcm_prev2[0] = OutInpOutAdpcm_prev[0];
-		OutInpOutAdpcm_prev2[1] = OutInpOutAdpcm_prev[1];
-		OutInpOutAdpcm_prev[0] = OutInpOutAdpcm[0];
-		OutInpOutAdpcm_prev[1] = OutInpOutAdpcm[1];
-
-		StoreSample(dest[0], (OutOutAdpcm[0]>>4));
-		StoreSample(dest[1], (OutOutAdpcm[1]>>4));
+		StoreSample(dest[0], OutInpAdpcm[0]);
+		StoreSample(dest[1], OutInpAdpcm[1]);
 	}
 }
 
@@ -257,6 +200,24 @@ void X68PCM8::Mix(Sample* buffer, int nsamples)
 	} else {
 		pcmset62500(buffer, nsamples);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 	驱动模式设置（转发到所有通道）
+//
+void X68PCM8::SetDriverMode(int mode)
+{
+	for (int i=0; i<PCM8_NCH; ++i) {
+		mPcm8[i].SetDriverMode(mode);
+	}
+}
+
+// ---------------------------------------------------------------------------
+//	ソフト停止（Variable モード状態保持）
+//
+void X68PCM8::SoftStop()
+{
+	mPcm8[0].SoftStop();
 }
 
 // ---------------------------------------------------------------------------

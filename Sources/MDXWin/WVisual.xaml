@@ -1,0 +1,15 @@
+﻿<Window x:Class="MDXWin.WVisual"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:MDXWin"
+        xmlns:wf="clr-namespace:System.Windows.Forms;assembly=System.Windows.Forms"
+        mc:Ignorable="d"
+        Title="Visual" ResizeMode="NoResize" SizeToContent="WidthAndHeight" Loaded="Window_Loaded" Closing="Window_Closing" Background="Black" Foreground="White" KeyUp="Window_KeyUp">
+    <Grid x:Name="MainGrid">
+        <WindowsFormsHost x:Name="WinFormsHost">
+            <wf:Panel x:Name="WinFormsPanel" MouseUp="WinFormsPanel_MouseUp" Paint="WinFormsPanel_Paint" DoubleClick="WinFormsPanel_DoubleClick" />
+        </WindowsFormsHost>
+    </Grid>
+</Window>

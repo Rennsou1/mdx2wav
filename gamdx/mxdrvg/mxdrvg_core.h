@@ -3,6 +3,11 @@
 //
 // Converted for Win32 [MXDRVg] V1.50a
 // Copyright (C) 2000 GORRY.
+//
+// Modified by Rennsou1_2006 (2026):
+//   64-bit pointer safety, PCM8A/PCM8PP auto-detection,
+//   Variable mode (MXDRVp) pre-scan, MXDRVG_HasVariableMode API,
+//   OPM/PCM volume balancing, PCM8 SoftStop
 
 // ;=============================================
 // ;  Filename mxdrv17.x
@@ -35,7 +40,7 @@
 
 #include "opm_delegate.h"
 #include "../pcm8/x68pcm8.h"
-#include "../downsample/downsample.h"
+
 
 extern volatile unsigned char OpmReg1B;  // OPM レジスタ $1B の内容
 
@@ -70,7 +75,7 @@ static void OPMINTFUNC(void);
 
 static OPM_Delegate *OPM = OPM_Delegate::getFmgen();
 static X68K::X68PCM8 PCM8;
-static X68K::DOWNSAMPLE DS;
+
 
 /***************************************************************/
 
@@ -101,6 +106,7 @@ static void (MXDRVG_CALLBACK *MXDRVG_CALLBACK_OPMINT)(void);
 
 static int volatile MeasurePlayTime;
 static int TotalVolume;
+static int DetectedHasVariable;  // 预扫描检测到 Variable 模式码（MXDRVp 标志）
 
 /***************************************************************/
 
@@ -238,8 +244,8 @@ void MXDRVG_SetEmulationType(
 	int ym2151type
 ) {
   switch (ym2151type) {
-  case MXDRVG_YM2151TYPE_MAME:
-    OPM = OPM_Delegate::getMame();
+  case MXDRVG_YM2151TYPE_YMFM:
+    OPM = OPM_Delegate::getYmfm();
     break;
   default:
     break;
@@ -260,42 +266,15 @@ int MXDRVG_Start(
 	memset( (void *)&KEY, 0, sizeof(KEY) );
 	G.MEASURETIMELIMIT = (1000*(60*20-2))*(LONGLONG)4000/1024; // 20min-2sec
 
-	switch (samprate) {
-	  case 22050:
-		G.SAMPRATE = 22050;
-		G.INNERSAMPRATE = 22050;
-		G.OPMFILTER = 0;
-		break;
-
-	  case 44100:
-		G.SAMPRATE = 44100;
-		G.INNERSAMPRATE = 62500;
-		G.OPMFILTER = (filtermode&2) ? 1 : 0;
-		break;
-
-	  case 48000:
-		G.SAMPRATE = 48000;
-		G.INNERSAMPRATE = 62500;
-		G.OPMFILTER = (filtermode&2) ? 1 : 0;
-		break;
-
-	  case 62500:
-		G.SAMPRATE = 62500;
-		G.INNERSAMPRATE = 62500;
-		G.OPMFILTER = (filtermode&2) ? 1 : 0;
-		break;
-
-	  default:
-		G.SAMPRATE = 0;
-		G.INNERSAMPRATE = 0;
-		G.OPMFILTER = 0;
-		return -1;
-	}
+	// 固定使用 X68K 原生采样率 62500Hz，不做降采样
+	(void)samprate;
+	G.SAMPRATE = 62500;
+	G.INNERSAMPRATE = 62500;
+	G.OPMFILTER = (filtermode&2) ? 1 : 0;
 
 	OPM->Init(4000000, G.INNERSAMPRATE, (G.OPMFILTER != 0));
 	OPM->SetIrqCallback(OPMINTFUNC);
 	PCM8.Init(G.INNERSAMPRATE);
-	DS.Init(G.INNERSAMPRATE, G.SAMPRATE, ((filtermode&1) == 0));
 
 	OPM->SetVolume(-12);
 	PCM8.SetVolume(0);
@@ -353,8 +332,6 @@ int MXDRVG_GetPCM(
 	int len
 ) {
 	SLONG rest_us;
-	static Sample *innerbuf = NULL;
-	static ULONG innerbuflen = 0;
 	int rest_len = len;
 	Sample *outerbuf = (Sample *)buf;
 
@@ -388,31 +365,53 @@ int MXDRVG_GetPCM(
 			//
 		}
 		if (create_len == 0) break;
-		ULONG create_len2 = DS.GetInSamplesForDownSample(create_len);
-		if (innerbuflen < create_len2) {
-			if (innerbuf) free(innerbuf);
-			innerbuflen = create_len2*2;
-			innerbuf = (Sample *)malloc(innerbuflen * sizeof(Sample) * 2);
-		}
-		if (innerbuf) {
-			memset(innerbuf, 0, create_len2*sizeof(Sample)*2);
-			OPM->Mix(innerbuf, create_len2);
-			PCM8.Mix(innerbuf, create_len2);
-			if (TotalVolume != 256) {
-				for (ULONG j=0; j<create_len2; j++) {
-					int v0 = (innerbuf[j*2+0] * TotalVolume) >> 8;
-					int v1 = (innerbuf[j*2+1] * TotalVolume) >> 8;
-					if (v0 < -32768) v0 = -32768;
-					if (v1 < -32768) v1 = -32768;
-					if (v0 > 32767) v0 = 32767;
-					if (v1 > 32767) v1 = 32767;
-					innerbuf[j*2+0] = v0;
-					innerbuf[j*2+1] = v1;
+		// 不做降采样，直接在输出缓冲区上渲染
+		memset(outerbuf, 0, create_len*sizeof(Sample)*2);
+		OPM->Mix(outerbuf, create_len);
+#ifdef PCM8_DEBUG
+		// 诊断: OPM 输出后采样值
+		{
+			static int diag_count = 0;
+			if (diag_count < 10) {
+				int opm_min=32767, opm_max=-32768;
+				for (ULONG j=0; j<create_len && j<64; j++) {
+					if (outerbuf[j*2] < opm_min) opm_min = outerbuf[j*2];
+					if (outerbuf[j*2] > opm_max) opm_max = outerbuf[j*2];
 				}
+				fprintf(stderr, "[DIAG %d] OPM range: [%d, %d]", diag_count, opm_min, opm_max);
+				diag_count++;
 			}
-			DS.DownSample(innerbuf, create_len, outerbuf);
-			outerbuf += create_len*2;
 		}
+#endif
+		PCM8.Mix(outerbuf, create_len);  // PCM8 混音
+#ifdef PCM8_DEBUG
+		// 诊断: PCM8 混合后采样值
+		{
+			static int diag_count2 = 0;
+			if (diag_count2 < 10) {
+				int mix_min=32767, mix_max=-32768;
+				for (ULONG j=0; j<create_len && j<64; j++) {
+					if (outerbuf[j*2] < mix_min) mix_min = outerbuf[j*2];
+					if (outerbuf[j*2] > mix_max) mix_max = outerbuf[j*2];
+				}
+				fprintf(stderr, " | After PCM8: [%d, %d]\n", mix_min, mix_max);
+				diag_count2++;
+			}
+		}
+#endif
+		if (TotalVolume != 256) {
+			for (ULONG j=0; j<create_len; j++) {
+				int v0 = (outerbuf[j*2+0] * TotalVolume) >> 8;
+				int v1 = (outerbuf[j*2+1] * TotalVolume) >> 8;
+				if (v0 < -32768) v0 = -32768;
+				if (v1 < -32768) v1 = -32768;
+				if (v0 > 32767) v0 = 32767;
+				if (v1 > 32767) v1 = 32767;
+				outerbuf[j*2+0] = v0;
+				outerbuf[j*2+1] = v1;
+			}
+		}
+		outerbuf += create_len*2;
 		G.PLAYSAMPLES += create_len;
 		ULONG use_us = (create_len*1000000)/G.SAMPRATE;
 		OPM->Count(use_us);
@@ -429,6 +428,41 @@ void MXDRVG_TotalVolume(
 	int vol
 ) {
 	TotalVolume = vol;
+}
+
+/***************************************************************/
+
+// 参照 MDXWin CCommon.cs PCM8Volume:
+//   PCM8 全局音量调整（dB 单位）
+//   MDXWin 使用 0.65（默认）或 0.9（Moonlight 作品）作为乘数
+//   gamdx 通过 SetVolume(db) 设置 mVolume = 16384 * 10^(db/40)
+//   mVolume 在混音时 >>9 应用，所以有效乘数 = mVolume/512
+MXDRVG_EXPORT
+void MXDRVG_SetPCM8Volume(
+	int db
+) {
+	PCM8.SetVolume(db);
+}
+
+/***************************************************************/
+
+// 从 PDX 元数据设置 PCM8 可变频率基准采样率
+// rate_hz: 原始采样率 (Hz)
+MXDRVG_EXPORT
+void MXDRVG_SetPCM8VariableBaseRate(
+	int rate_hz
+) {
+	PCM8.SetVariableBaseRate(rate_hz);
+}
+
+/***************************************************************/
+
+// 查询 MDX 预扫描中是否检测到 Variable 模式码（MXDRVp 标志）
+MXDRVG_EXPORT
+int MXDRVG_HasVariableMode(
+	void
+) {
+	return DetectedHasVariable;
 }
 
 /***************************************************************/
@@ -467,6 +501,74 @@ void MXDRVG_SetData(
 	void *pdx,
 	ULONG pdxsize
 ) {
+	// ── MDX 預扫描：自动检测 PCM 驱动类型 + Variable 模式 ──
+	// 扫描 MDX 数据中的所有 0xED（频率/模式设置）命令
+	// 根据后续模式码的特征判断是 PCM8A 还是 PCM8PP
+	// 同时检测 Variable 模式码（$07/$28）以区分 MXDRVm 和 MXDRVp
+	{
+		UBYTE *data = (UBYTE *)mdx;
+		int detected = PCM_DRIVER_PCM8PP;  // 默认 PCM8PP
+		bool pcm8a_found = false;
+		bool pcm8pp_found = false;
+		bool variable_found = false;
+
+		for (ULONG i = 0; i + 1 < mdxsize; i++) {
+			if (data[i] == 0xED) {
+				int mode_byte = data[i + 1];
+				// $30-$36: PCM8A 独有的 ADPCM 替代码
+				if (mode_byte >= 0x30 && mode_byte <= 0x36) {
+					pcm8a_found = true;
+				}
+				// $0D-$26: 仅 PCM8PP 定义（PCM8A 最大到 $0C）
+				if (mode_byte >= 0x0D && mode_byte <= 0x26) {
+					pcm8pp_found = true;
+				}
+				// $28: 两种驱动下都是 AdpcmRate==0 → Variable 模式
+				if (mode_byte == 0x28) {
+					variable_found = true;
+				}
+				// $07: 仅 PCM8PP 下为 Variable（PCM8A 下为 ADPCM 20.8kHz）
+				// 此处先标记，后续根据 detected 结果修正
+				if (mode_byte == 0x07) {
+					// 暂存，等驱动类型确定后再判断
+					// PCM8PP 的 $07: Through（AdpcmRate==0 → Variable）
+					// PCM8A 的 $07: ADPCM 20.8kHz（非 Variable）
+					// 用 pcm8pp_variable_07 标记
+				}
+			}
+		}
+
+		if (pcm8a_found && !pcm8pp_found) {
+			detected = PCM_DRIVER_PCM8A;
+		}
+		// pcm8pp_found → PCM8PP（即使也有 pcm8a_found，优先 PCM8PP）
+		// 两者都没找到 → 默认 PCM8PP
+		// $07-$0C 歧义区：默认 PCM8PP（与 MDXWin/mdx2wav 行为一致）
+
+		// $07 的 Variable 判定：仅在 PCM8PP 模式下生效
+		if (detected != PCM_DRIVER_PCM8A) {
+			// 重新扫描确认 $07 的存在
+			for (ULONG i = 0; i + 1 < mdxsize; i++) {
+				if (data[i] == 0xED && data[i + 1] == 0x07) {
+					variable_found = true;
+					break;
+				}
+			}
+		}
+
+		DetectedHasVariable = variable_found ? 1 : 0;
+		PCM8.SetDriverMode(detected);
+
+#ifndef NDEBUG
+		if (pcm8a_found || pcm8pp_found || variable_found) {
+			fprintf(stderr, "[MXDRV] PCM 驱动自动检测: %s variable=%d (pcm8a=%d pcm8pp=%d)\n",
+				detected == PCM_DRIVER_PCM8A ? "PCM8A" : "PCM8PP",
+				variable_found ? 1 : 0,
+				pcm8a_found ? 1 : 0, pcm8pp_found ? 1 : 0);
+		}
+#endif
+	}
+
 	X68REG reg;
 
 	reg.d0 = 0x02;
@@ -723,7 +825,9 @@ static void ADPCMMOD_STOP(
 static void ADPCMMOD_END(
 	void
 ) {
-	PCM8.Reset();
+	// 注意: 不能调用 PCM8.Reset()（它会通过 Init() 清除 Variable 模式状态）
+	// 使用 SoftStop 仅停止当前播放，保留 Variable 模式的 base 捕获信息
+	PCM8.SoftStop();
 }
 
 /***************************************************************/
@@ -4368,6 +4472,7 @@ static void L000e7e(
 	void
 ) {
 	UBYTE c0;
+	int pcm_slot = 0;  // 可变频率 PCM 用：保存 slot 号
 
 /*
 L000fba:;
@@ -4448,6 +4553,11 @@ L000eb2:;
 	D0 = 0x00;
 	D0 = A6->S0012;
 	D0 >>= 6;
+	pcm_slot = D0;  // 保存 slot 号（可变频率 PCM 用）
+#ifdef PCM8_DEBUG
+	fprintf(stderr, "[MXDRV PCM] note S0012=0x%04X pcm_slot=%d VarReady=%d\n",
+		A6->S0012, pcm_slot, PCM8.IsVariableRedirectReady() ? 1 : 0);
+#endif
 	D2 = A6->S001c;
 	D1 = D2;
 	D1 &= 0x0003;
@@ -4471,7 +4581,7 @@ L000edc:;
 														beq     L000ef4
 														andi.b  #$fc,d2
 */
-	D2 &= 0x001c;
+	D2 &= 0x00FC;  // pcm8++ 扩展: 保留 bits [7:2] 完整频率/类型模式码 (原始 0x001c 只支持 F0-F7)
 	D2 <<= 6;
 	D2 |= D1;
 	if ( G.L001df4 ) goto L000f28;
@@ -4506,9 +4616,58 @@ L000ef4:;
 	A1 += GETBLONG(A0); A0 += 4;
 	A0 += 2;
 	D3 = GETBWORD(A0); A0 += 2;
-	if ( D3 == 0x0000 ) goto L000f26;
+	if ( D3 == 0x0000 ) {
+		// 可变频率模式：空 slot 处理
+#ifdef PCM8_DEBUG
+		fprintf(stderr, "[MXDRV PCM] slot=%d D3=0 (empty) VarReady=%d\n",
+			pcm_slot, PCM8.IsVariableRedirectReady() ? 1 : 0);
+#endif
+		if ( PCM8.IsVariableRedirectReady() ) {
+			// base 已捕获：重定向（0xFF 跳过 SetMode 的频率/音量覆盖）
+			// 注意: ADPCMOUT 内部会加 0x00ff0000，所以 vol 字节设 0x00（加后变 0xFF=skip）
+			ADPCMMOD_END();
+			D1 = 0x0000FF00 | (D2 & 0x03);  // vol=0(+0xFF→skip), freq=skip, pan=保留
+			D1 |= ((pcm_slot & 0xFF) << 24);
+			D2 = 0;  // len=0 → Pcm8::Out 用 VariableBase 重定向
+			ADPCMOUT();
+			A2 = &G.L00223c[0];
+			A2[D7] = CLR;
+			A2 = &G.L001bb4[0];
+			A2[D7] = CLR;
+		} else {
+			// base 未捕获：扫描 PDX 找第一个有数据的 slot
+			UBYTE *pdx_base = (UBYTE *)G.L00222c;
+			for (int scan = 0; scan < 96; scan++) {
+				UBYTE *entry = pdx_base + scan * 8;
+				UWORD scan_len = GETBWORD(entry + 6);
+				if (scan_len != 0) {
+#ifdef PCM8_DEBUG
+					fprintf(stderr, "[MXDRV PCM] Variable base scan (ADPCM path): slot=%d len=%u\n",
+						scan, scan_len);
+#endif
+					ADPCMMOD_END();
+					A1 = pdx_base + GETBLONG(entry);
+					D1 = D2;
+					D1 |= ((pcm_slot & 0xFF) << 24);
+					D2 = scan_len;
+					if (D2 > 0xff00) D2 = 0xff00;
+					ADPCMOUT();
+					A2 = &G.L00223c[0];
+					A2[D7] = CLR;
+					A2 = &G.L001bb4[0];
+					A2[D7] = CLR;
+					break;
+				}
+			}
+		}
+		goto L000f26;
+	}
+#ifdef PCM8_DEBUG
+	fprintf(stderr, "[MXDRV PCM] slot=%d D3=%u (has data) → ADPCMOUT\n", pcm_slot, D3);
+#endif
 	ADPCMMOD_END();
 	D1 = D2;
+	D1 |= ((pcm_slot & 0xFF) << 24);  // 高 8 位存 slot 号（可变频率 PCM 用）
 	D2 = D3;
 	if ( D2 > 0xff00 ) D2 = 0xff00;  // DMAサイズ制限
 	ADPCMOUT();
@@ -4564,7 +4723,74 @@ L000f28:;
 	A1 = G.L00222c;
 	A0 = A1+D0;
 	D3 = GETBLONG( A0+4 );
-	if ( D3 == 0 ) goto L000f26;
+	if ( D3 == 0 ) {
+		// 可变频率模式：空 slot 处理
+		if ( PCM8.IsVariableRedirectReady() ) {
+			// base 已捕获：重定向（0xFF 跳过 SetMode 的频率/音量覆盖）
+			D0 = A6->S0018;
+			D0 &= 0x07;
+			D1 = 0x00FFFF00 | (D2 & 0x03);  // vol=skip, freq=skip, pan=保留
+			D1 |= ((pcm_slot & 0xFF) << 24);
+			D2 = 0;  // len=0 → Pcm8::Out 用 VariableBase 重定向
+			PCM8_SUB();
+			A2 = &G.L00223c[0];
+			A2[0x0008] = CLR;
+			A2 = &G.L001bb4[0];
+			A2[D7] = CLR;
+		} else if ( PCM8.IsVariableMode() ) {
+			// base 未捕获：扫描同 bank 内的所有 slot 找第一个有数据的
+			// 用它触发首次播放（捕获 base），当前音符作为 note 进行音高计算
+			int bank_base = (int)(A6->S0004_b);
+			UBYTE *pdx_base = (UBYTE *)G.L00222c;
+			for (int scan = 0; scan < 96; scan++) {
+				int idx = scan + bank_base * 96;
+				UBYTE *entry = pdx_base + idx * 8;
+				ULONG scan_len = GETBLONG(entry + 4);
+				if (scan_len != 0) {
+#ifdef PCM8_DEBUG
+					fprintf(stderr, "[MXDRV PCM] Variable base scan: found slot=%d (bank=%d) len=%u\n",
+						scan, bank_base, scan_len);
+#endif
+					// 按照正常播放路径的格式设置寄存器
+					A1 = pdx_base + GETBLONG(entry);  // 数据地址
+
+					// 音量计算（复制正常路径 L000f78 的逻辑）
+					D1 = 0x00;
+					D1 = A6->S0022;
+					{ UBYTE vol_flag = D1 & (1<<7); D1 &= ~(1<<7);
+					  if (!vol_flag) D1 = Volume[D1]; }
+					D1 += G.L001e14;
+					if ((SBYTE)D1 < 0) { D1 = 0; }
+					else if (D1 < 0x2b) { D1 = PCMVolume[D1]; }
+					else { D1 = 0; }
+
+					// 组装 mode word: D1=volume<<16 | mode | slot<<24
+					D1 <<= 16;
+					D1 |= (D2 & 0xffff);  // D2 保留着之前计算的 mode bits
+					D1 |= ((pcm_slot & 0xFF) << 24);
+
+					// 第一次 PCM8_SUB: mode 设置（len=0 → Pcm8::Out 内部不播放）
+					D0 = A6->S0018;
+					D0 &= 0x07;
+					D2 = 0;
+					PCM8_SUB();
+
+					// 第二次 PCM8_SUB: 数据播放
+					D0 = A6->S0018;
+					D0 &= 0x07;
+					D2 = scan_len & 0xffffff;
+					PCM8_SUB();
+
+					A2 = &G.L00223c[0];
+					A2[0x0008] = CLR;
+					A2 = &G.L001bb4[0];
+					A2[D7] = CLR;
+					break;
+				}
+			}
+		}
+		goto L000f26;
+	}
 	A1 += GETBLONG( A0 );
 	D0 = A6->S0018;
 	D0 &= 0x0007;
@@ -4620,6 +4846,7 @@ L000f8e:;
 */
 	D1 <<= 16;
 	D1 |= (D2&0xffff);
+	D1 |= ((pcm_slot & 0xFF) << 24);  // 高 8 位存 slot 号（可变频率 PCM 用）
 	D2 = 0x00;
 	PCM8_SUB();
 	D0 = A6->S0018;
