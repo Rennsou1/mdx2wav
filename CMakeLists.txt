@@ -32,3 +32,6 @@ target_compile_options(mdx2wav PRIVATE
 target_compile_definitions(mdx2wav PRIVATE
 	$<$<CONFIG:Debug>:PCM8_DEBUG>
 )
+
+# 静态链接 GCC/C++ 运行时（生成独立 exe，不依赖 libgcc/libstdc++ DLL）
+target_link_options(mdx2wav PRIVATE -static -static-libgcc -static-libstdc++)
