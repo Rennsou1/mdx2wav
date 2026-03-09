@@ -13,6 +13,7 @@ Makefile
 
 #文档
 PCM8PP83/
+Sources/
 
 # 测试用音乐文件（版权素材，不应提交）
 *.mdx
