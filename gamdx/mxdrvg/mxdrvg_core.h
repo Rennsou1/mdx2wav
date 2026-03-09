@@ -73,7 +73,7 @@ static void SETOPMINT(
 
 static void OPMINTFUNC(void);
 
-static OPM_Delegate *OPM = OPM_Delegate::getFmgen();
+static OPM_Delegate *OPM = OPM_Delegate::getNuked();
 static X68K::X68PCM8 PCM8;
 
 
@@ -244,6 +244,9 @@ void MXDRVG_SetEmulationType(
 	int ym2151type
 ) {
   switch (ym2151type) {
+  case MXDRVG_YM2151TYPE_NUKED:
+    OPM = OPM_Delegate::getNuked();
+    break;
   case MXDRVG_YM2151TYPE_YMFM:
     OPM = OPM_Delegate::getYmfm();
     break;

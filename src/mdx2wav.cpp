@@ -1,15 +1,15 @@
-// mdx2wav — MDX to raw PCM converter
+// mdx2wav — MDX to WAV converter
 // Original Copyright 2014 mitsuman (@__mtm), Apache License 2.0
 // Modified by Rennsou1_2006 (2026):
-//   MDX/PDX loader rewrite, JSON metadata extraction (-i),
-//   ReplayGain peak normalization, native 62500Hz output,
-//   Variable frequency PCM (MXDRVp) support, Windows binary stdout fix
-#include <ctype.h>
+//   直接 WAV 文件输出（拖入 MDX 即用）、ReplayGain 峰值归一化、
+//   JSON 元数据提取、Variable 频率 PCM (MXDRVp)、62500Hz 原生输出
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -17,14 +17,11 @@
 
 #include "../gamdx/mxdrvg/mxdrvg.h"
 
-#define VERSION "1.0"
+#define VERSION "2.0"
 
-bool verbose = false;
+static bool verbose = false;
 
-typedef unsigned char u8;
-typedef unsigned int u32;
-
-const int MAGIC_OFFSET = 10;
+static constexpr int MAGIC_OFFSET = 10;
 
 // @param mode 0:tolower, 1:toupper, 2:normal
 void strcpy_cnv(char *dst, const char *src, int mode) {
@@ -37,8 +34,8 @@ void strcpy_cnv(char *dst, const char *src, int mode) {
   *dst = 0;
 }
 
-bool read_file(const char *name, int *fsize, u8 **fdata, int offset) {
-  *fdata = 0;
+static bool read_file(const char *name, int *fsize, uint8_t **fdata, int offset) {
+  *fdata = nullptr;
   *fsize = 0;
 
   int fd = open(name, O_RDONLY | O_BINARY);
@@ -64,7 +61,7 @@ bool read_file(const char *name, int *fsize, u8 **fdata, int offset) {
     return false;
   }
 
-  u8 *data = new u8[size + offset];
+  auto *data = new uint8_t[size + offset];
   size = read(fd, data + offset, size);
 
   close(fd);
@@ -82,8 +79,8 @@ struct MdxInfo {
   int has_variable;        // 预扫描检测到 Variable 模式码（MXDRVp 标志）
 };
 
-bool LoadMDX(const char *mdx_name, char *title, int title_len, MdxInfo *info) {
-  u8 *mdx_buf = 0, *pdx_buf = 0;
+static bool LoadMDX(const char *mdx_name, char *title, int title_len, MdxInfo *info) {
+  uint8_t *mdx_buf = nullptr, *pdx_buf = nullptr;
   int mdx_size = 0, pdx_size = 0;
 
   // 初始化 info
@@ -114,7 +111,7 @@ bool LoadMDX(const char *mdx_name, char *title, int title_len, MdxInfo *info) {
   }
 
   while (pos < mdx_size) {
-    u8 c = mdx_buf[pos++];
+    uint8_t c = mdx_buf[pos++];
     if (c == 0x1a) break;
   }
 
@@ -127,12 +124,14 @@ bool LoadMDX(const char *mdx_name, char *title, int title_len, MdxInfo *info) {
   }
 
   while (pos < mdx_size) {
-    u8 c = mdx_buf[pos++];
+    uint8_t c = mdx_buf[pos++];
     if (c == 0) break;
   }
 
-  if (pos >= mdx_size)
+  if (pos >= mdx_size) {
+    delete[] mdx_buf;  // 内存泄漏修复：失败路径清理
     return false;
+  }
 
   // Get mdx path.
   if (*pdx_name) {
@@ -147,7 +146,9 @@ bool LoadMDX(const char *mdx_name, char *title, int title_len, MdxInfo *info) {
       }
     }
 
-    if (pdx_name_start + strlen(pdx_path) + 4 >= sizeof(pdx_path)) {
+    // 溢出检查：pdx_name 长度 + 扩展名 ".pdx" 必须在 pdx_path 剩余空间内
+    if (pdx_name_start + strlen(pdx_name) + 4 >= sizeof(pdx_path)) {
+      delete[] mdx_buf;  // 内存泄漏修复
       return false;
     }
 
@@ -199,7 +200,7 @@ bool LoadMDX(const char *mdx_name, char *title, int title_len, MdxInfo *info) {
     }
   }
 
-  u8 *mdx_head = mdx_buf + mdx_body_pos - MAGIC_OFFSET;
+  uint8_t *mdx_head = mdx_buf + mdx_body_pos - MAGIC_OFFSET;
   mdx_head[0] = 0x00;
   mdx_head[1] = 0x00;
   mdx_head[2] = (pdx_buf ? 0 : 0xff);
@@ -235,7 +236,7 @@ bool LoadMDX(const char *mdx_name, char *title, int title_len, MdxInfo *info) {
   // 格式: "PDXr"(4B) + version(2B) + count(2B) + entries(N×6B) + "rXDP"(4B)
   // 每个 entry: slot_index(2B BE) + sample_rate(4B BE)
   if (pdx_buf && pdx_size > MAGIC_OFFSET + 12) {
-    u8 *pdx_data = pdx_buf + MAGIC_OFFSET;
+    uint8_t *pdx_data = pdx_buf + MAGIC_OFFSET;
     int pdx_data_size = pdx_size - MAGIC_OFFSET;
 
     // 检查尾部 4 字节 "rXDP" 签名
@@ -307,9 +308,9 @@ bool LoadMDX(const char *mdx_name, char *title, int title_len, MdxInfo *info) {
   return true;
 }
 
-void version() {
+static void version() {
   printf(
-    "mdx2wav version "VERSION"\n"
+    "mdx2wav version " VERSION "\n"
     "Copyright 2014 @__mtm\n"
     " based on MDXDRVg V1.50a (C) 2000 GORRY.\n"
     "  converted from X68k MXDRV music driver version 2.06+17 Rel.X5-S\n"
@@ -317,18 +318,19 @@ void version() {
     );
 }
 
-void help() {
+static void help() {
   printf(
     "Usage: mdx2wav [options] <file>\n"
-    "Convert mdx file to 16bit stereo raw pcm (62500Hz) and write it to stdout.\n"
-    " if you need to convert to other format, use ffmpeg like a following.\n"
-    "  mdx2wav xxx.mdx | ffmpeg -f s16le -ar 62500 -ac 2 -i - xxx.wav\n"
-    " if you want to listen now, use aplay like a following.\n"
-    "  mdx2wav xxx.mdx | aplay -f S16_LE -r 62500 -c 2\n"
+    "Convert MDX file to WAV (default) or raw PCM.\n"
+    "  By default, writes <input>.wav to the same directory.\n"
+    "  Drag and drop an MDX file onto mdx2wav.exe to convert.\n"
+    "\n"
     "Options:\n"
+    "  -o <file> : specify output WAV filename.\n"
+    "  -r        : raw mode, output 16bit stereo PCM to stdout (no WAV header).\n"
     "  -d <sec>  : limit song duration. 0 means nolimit. (default:300)\n"
-    "  -e <type> : set ym2151 emulation type, fmgen or mame. (default:fmgen)\n"
-    "  -f        : enable fadeout.\n"
+    "  -e <type> : set ym2151 emulation type, nuked or ymfm. (default:ymfm)\n"
+    "  -f        : enable fadeout. (default:on)\n"
     "  -i        : output song info as JSON to stdout and exit.\n"
     "  -l <loop> : set loop limit. (default:2)\n"
     "  -m        : measure play time as sec.\n"
@@ -337,6 +339,71 @@ void help() {
     );
 }
 
+// ── WAV 文件头写入（标准 44 字节 RIFF PCM 格式）──
+// 参数: 采样率、通道数 (2=stereo)、每采样位深 (16)、PCM 数据总字节数
+static void write_wav_header(FILE *fp, uint32_t sample_rate, uint16_t channels,
+                             uint16_t bits_per_sample, uint32_t data_size) {
+  uint32_t byte_rate = sample_rate * channels * (bits_per_sample / 8);
+  uint16_t block_align = channels * (bits_per_sample / 8);
+  uint32_t riff_size = 36 + data_size;  // 文件总大小 - 8
+
+  // RIFF 头
+  fwrite("RIFF", 1, 4, fp);
+  fwrite(&riff_size, 4, 1, fp);
+  fwrite("WAVE", 1, 4, fp);
+
+  // fmt 子块
+  fwrite("fmt ", 1, 4, fp);
+  uint32_t fmt_size = 16;
+  fwrite(&fmt_size, 4, 1, fp);
+  uint16_t audio_format = 1;  // PCM
+  fwrite(&audio_format, 2, 1, fp);
+  fwrite(&channels, 2, 1, fp);
+  fwrite(&sample_rate, 4, 1, fp);
+  fwrite(&byte_rate, 4, 1, fp);
+  fwrite(&block_align, 2, 1, fp);
+  fwrite(&bits_per_sample, 2, 1, fp);
+
+  // data 子块
+  fwrite("data", 1, 4, fp);
+  fwrite(&data_size, 4, 1, fp);
+}
+
+// ── 从输入文件名生成输出 WAV 路径 ──
+// "path/to/song.mdx" → "path/to/song.wav"
+static void make_wav_filename(char *out, size_t out_size, const char *mdx_name) {
+  strncpy(out, mdx_name, out_size - 1);
+  out[out_size - 1] = '\0';
+
+  // 找到最后一个 '.' 的位置
+  char *dot = nullptr;
+  for (char *p = out; *p; p++) {
+    if (*p == '.') dot = p;
+  }
+
+  if (dot && (size_t)(dot - out) + 4 < out_size) {
+    strcpy(dot, ".wav");
+  } else {
+    // 无扩展名或空间不足：直接追加
+    size_t len = strlen(out);
+    if (len + 4 < out_size) {
+      strcpy(out + len, ".wav");
+    }
+  }
+}
+
+
+
+// ── 辅助：重置播放状态（消除 PlayAt 后重复设置 Variable/PCM8Volume 的代码）──
+static void ResetPlayback(int loop, int fadeout, const MdxInfo &info) {
+  MXDRVG_PlayAt(0, loop, fadeout);
+  // PlayAt 内部重新初始化 PCM8，必须重新设置 Variable 基准采样率
+  if (info.pdx_sample_rate > 0) {
+    MXDRVG_SetPCM8VariableBaseRate(info.pdx_sample_rate);
+  }
+  // 恢复 OPM/PCM 平衡比
+  MXDRVG_SetPCM8Volume(-11);
+}
 
 
 int main(int argc, char **argv) {
@@ -345,20 +412,20 @@ int main(int argc, char **argv) {
   _setmode(_fileno(stdout), _O_BINARY);
   _setmode(_fileno(stderr), _O_BINARY);
 #endif
-  int MDX_BUF_SIZE = 256 * 1024;
-  int PDX_BUF_SIZE = 1024 * 1024;
-  int SAMPLE_RATE = 62500;  // X68K 原生采样率，不做重采样
+  constexpr int SAMPLE_RATE = 62500;  // X68K 原生采样率，不做重采样
   int filter_mode = 0;
 
   bool measure_play_time = false;
   bool get_info = false;
+  bool raw_mode = false;  // -r: 原始 PCM 输出到 stdout（向后兼容）
+  char output_path[FILENAME_MAX] = "";  // -o: 指定输出文件名
   float max_song_duration = 300.0f;
   int loop = 2;
-  int fadeout = 0;
-  char ym2151_type[8] = "fmgen";
+  int fadeout = 1;  // 默认启用淡出
+  char ym2151_type[8] = "ymfm";  // 默认 YMFM 引擎
 
   int opt;
-  while ((opt = getopt(argc, argv, "d:e:fil:mvV")) != -1) {
+  while ((opt = getopt(argc, argv, "d:e:fil:mo:rvV")) != -1) {
     switch (opt) {
       case 'd':
         max_song_duration = atof(optarg);
@@ -378,6 +445,12 @@ int main(int argc, char **argv) {
       case 'm':
         measure_play_time = true;
         break;
+      case 'o':
+        strncpy(output_path, optarg, sizeof(output_path) - 1);
+        break;
+      case 'r':
+        raw_mode = true;
+        break;
       case 'v':
         version();
         return 0;
@@ -390,15 +463,16 @@ int main(int argc, char **argv) {
     }
   }
 
-  int AUDIO_BUF_SAMPLES = SAMPLE_RATE / 100; // 10ms
+  constexpr int AUDIO_BUF_SAMPLES = SAMPLE_RATE / 100; // 10ms
 
   const char *mdx_name = argv[optind];
-  if (mdx_name == 0 || *mdx_name == 0) {
+  if (mdx_name == nullptr || *mdx_name == 0) {
     help();
     return 0;
   }
 
-  if (0 == strcmp(ym2151_type, "fmgen")) {
+  if (0 == strcmp(ym2151_type, "nuked")) {
+    MXDRVG_SetEmulationType(MXDRVG_YM2151TYPE_NUKED);
   } else if (0 == strcmp(ym2151_type, "ymfm")) {
     MXDRVG_SetEmulationType(MXDRVG_YM2151TYPE_YMFM);
   } else {
@@ -406,7 +480,7 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  MXDRVG_Start(SAMPLE_RATE, filter_mode, MDX_BUF_SIZE, PDX_BUF_SIZE);
+  MXDRVG_Start(SAMPLE_RATE, filter_mode, 256 * 1024, 1024 * 1024);
   MXDRVG_TotalVolume(256);
 
   char title[256];
@@ -438,18 +512,13 @@ int main(int argc, char **argv) {
   int timer_b = gwork->L001e0c;  // @t: Timer-B 値（MML 处理后的最终值）
   unsigned long total_clock = gwork->PLAYTIME;
 
-  MXDRVG_PlayAt(0, loop, fadeout);
-  // PlayAt 内部重新初始化 PCM8，必须重新设置 Variable 基准采样率
-  if (mdx_info.pdx_sample_rate > 0) {
-    MXDRVG_SetPCM8VariableBaseRate(mdx_info.pdx_sample_rate);
-  }
   // ===== OPM/PCM 音量平衡（参照 MDXWin）=====
   // MDXWin: OPM 和 PCM 在同一 float[-1,1] 空间 1:1 混合，PCM 额外 ×0.65
   // gamdx: fmgen/MAME 均使用 db/40 公式: mVolume = 16384 × 10^(db/40)
   //   OPM SetVolume(-12) → mVolume = 16384 × 10^(-0.3) = 8798
   //   PCM 目标 mVolume = 8798 × 1.00 = 8798
   //   db = 40 × log10(8798/16384) = -11
-  MXDRVG_SetPCM8Volume(-11);
+  ResetPlayback(loop, fadeout, mdx_info);
 
   // 输出 JSON 元数据到 stdout（参照 MDXWin GetVisualGlobal）
   if (get_info) {
@@ -548,12 +617,14 @@ int main(int argc, char **argv) {
   short *audio_buf = new short [AUDIO_BUF_SAMPLES * 2];
 
   // ===== ReplayGain: 两遍渲染峰值归一化 =====
-  // 第一遍: 渲染全曲找到峰值
+  // 第一遍: 渲染全曲找到峰值，同时计算总采样数（用于 WAV 头）
   short peak = 0;
+  uint32_t total_samples = 0;  // 总立体声采样数
   for (int i = 0; song_duration == 0.0f || 1.0f * i * AUDIO_BUF_SAMPLES / SAMPLE_RATE < song_duration; i++) {
     if (MXDRVG_GetTerminated()) break;
     int len = MXDRVG_GetPCM(audio_buf, AUDIO_BUF_SAMPLES);
     if (len <= 0) break;
+    total_samples += len;
     for (int j = 0; j < len * 2; j++) {
       short abs_val = (audio_buf[j] < 0) ? -audio_buf[j] : audio_buf[j];
       if (abs_val > peak) peak = abs_val;
@@ -568,43 +639,63 @@ int main(int argc, char **argv) {
     float gain = target_peak / peak;
     // 限制最大增益为 4倍（防止极小音量文件的过度放大）
     if (gain > 4.0f) gain = 4.0f;
-    // 不进行衰减（保留原始音量）: 只在 gain > 1 时应用
-    // 实际上也允许衰减，参照 MDXWin 的行为
     replayGainVol = (int)(256.0f * gain);
     if (verbose) {
       fprintf(stderr, "ReplayGain: peak=%d gain=%.2f vol=%d\n", peak, gain, replayGainVol);
     }
   }
 
-  // 第二遍: 重新渲染并输出
-  MXDRVG_PlayAt(0, loop, fadeout);
-  // PlayAt 内部重新初始化 PCM8，必须重新设置 Variable 基准采样率
-  if (mdx_info.pdx_sample_rate > 0) {
-    MXDRVG_SetPCM8VariableBaseRate(mdx_info.pdx_sample_rate);
+  // ── 确定输出目标 ──
+  FILE *out_fp = nullptr;
+  bool writing_wav = false;  // 是否写 WAV 文件（vs raw stdout）
+
+  if (raw_mode) {
+    // -r: 原始 PCM 输出到 stdout（向后兼容旧管道用法）
+    out_fp = stdout;
+    writing_wav = false;
+  } else {
+    // 默认: 写 WAV 文件
+    if (output_path[0] == '\0') {
+      // 未指定 -o: 自动从输入文件名生成
+      make_wav_filename(output_path, sizeof(output_path), mdx_name);
+    }
+    out_fp = fopen(output_path, "wb");
+    if (!out_fp) {
+      fprintf(stderr, "Cannot create output file: %s\n", output_path);
+      delete[] audio_buf;
+      MXDRVG_End();
+      return -1;
+    }
+    writing_wav = true;
+    fprintf(stderr, "Rendering: %s\n", output_path);
   }
-  MXDRVG_SetPCM8Volume(-11);  // 恢复 OPM/PCM 平衡比（参照上方计算）
+
+  // WAV 头写入（data_size = 总采样数 × 2通道 × 2字节）
+  uint32_t pcm_data_size = total_samples * 2 * sizeof(short);
+  if (writing_wav) {
+    write_wav_header(out_fp, SAMPLE_RATE, 2, 16, pcm_data_size);
+  }
+
+  // 第二遍: 重新渲染并输出
+  ResetPlayback(loop, fadeout, mdx_info);
   MXDRVG_TotalVolume(replayGainVol);
 
   for (int i = 0; song_duration == 0.0f || 1.0f * i * AUDIO_BUF_SAMPLES / SAMPLE_RATE < song_duration; i++) {
-    if (MXDRVG_GetTerminated()) {
-      break;
-    }
-
+    if (MXDRVG_GetTerminated()) break;
     int len = MXDRVG_GetPCM(audio_buf, AUDIO_BUF_SAMPLES);
-    if (len <= 0) {
-      break;
-    }
+    if (len <= 0) break;
+    fwrite(audio_buf, len, 4, out_fp);
+  }
 
-
-    fwrite(audio_buf, len, 4, stdout);
+  // 关闭输出
+  if (writing_wav && out_fp) {
+    fclose(out_fp);
+    float dur = (float)total_samples / SAMPLE_RATE;
+    fprintf(stderr, "Done: %.1fs, %u samples -> %s\n", dur, total_samples, output_path);
   }
 
   MXDRVG_End();
+  delete[] audio_buf;
 
-  delete []audio_buf;
-
-  if (verbose) {
-    fprintf(stderr, "completed.\n");
-  }
   return 0;
 }

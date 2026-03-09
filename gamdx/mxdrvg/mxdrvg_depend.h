@@ -1,8 +1,7 @@
 // MXDRVG.DLL X68000-depend header
 // Copyright (C) 2000 GORRY.
 
-#ifndef __MXDRVG_DEPEND_H__
-#define __MXDRVG_DEPEND_H__
+#pragma once
 
 typedef unsigned char UBYTE;
 typedef unsigned short UWORD;
@@ -22,8 +21,13 @@ typedef MXDRVG_SAMPLETYPE Sample;
 #define MXDRVG_CALLBACK
 #endif
 
+// 条件定义：避免与标准库或系统头文件冲突
+#ifndef FALSE
 #define FALSE 0
+#endif
+#ifndef TRUE
 #define TRUE 1
+#endif
 
 typedef struct __X68REG {
     ULONG d0;
@@ -54,10 +58,3 @@ typedef struct __X68REG {
 
 
 
-
-
-
-
-
-
-#endif //__MXDRVG_DEPEND_H__

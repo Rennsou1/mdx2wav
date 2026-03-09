@@ -1,11 +1,10 @@
-#if !defined(__OPM_DELEGTE__)
-#define __OPM_DELEGTE__
+#pragma once
 
 #include "../types.h"
 
 class OPM_Delegate {
 public:
-  static OPM_Delegate *getFmgen();
+  static OPM_Delegate *getNuked();
   static OPM_Delegate *getYmfm();
   typedef void CALLBACK(void);
 
@@ -27,5 +26,3 @@ public:
   //virtual void SetChannelMask(uint mask) = 0;
   virtual void SetIrqCallback(CALLBACK *callback) = 0;
 };
-
-#endif

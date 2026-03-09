@@ -19,6 +19,8 @@ Sources/
 *.mdx
 *.pdx
 *.mus
+*.wav
+test/
 
 # IDE / 编辑器
 .vscode/

@@ -158,9 +158,8 @@ inline void X68PCM8::pcmset62500(Sample* buffer, int ndata) {
 //
 inline void X68PCM8::pcmset22050(Sample* buffer, int ndata) {
 	Sample* limit = buffer + ndata * 2;
+	int rate2 = 0;  // 采样率比率累加器（每次 Mix 调用重置）
 	for (Sample* dest = buffer; dest < limit; dest+=2) {
-
-		static int rate=0,rate2=0;
 		rate2 -= 15625;
 		if (rate2 < 0) {
 			rate2 += 22050;

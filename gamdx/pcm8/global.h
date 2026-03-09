@@ -3,19 +3,15 @@
 //   PCM8A rate/kind tables, PCM8PP PCM16 volume shift table,
 //   PcmDriverMode enum (PCM8PP/PCM8A runtime switching)
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <string.h>
-#include <assert.h>
+#pragma once
 
-#if !defined(__FMXDRVG_PCM8_GLOBAL_H__)
-#define __FMXDRVG_PCM8_GLOBAL_H__
-
-
+#include <cstdio>
+#include <cstdlib>
+#include <cmath>
+#include <cstring>
+#include <cassert>
 
 #define PCM8_NCH 8  // チャンネル数
-
 
 // 旧 X68Sound ADPCM テーブル (dltLTBL, DCT, ADPCMRATETBL) は
 // MAME 方式 diff_lookup + index_shift (pcm8.cpp) に置換済み、削除
@@ -23,7 +19,7 @@
 // PCM8PP 完整采样率表（Hz × 12）
 // 参照 MDXWin CPDXCommon.cs PCM8PPマーキュリー用PCMドライバー ver0.83d
 // 模式码 $00-$29 对应不同的 频率×数据类型 组合
-static int ADPCMRATEADDTBL[64] = {
+inline constexpr int ADPCMRATEADDTBL[64] = {
 	// $00-$04: ADPCM @ 3.9/5.2/7.8/10.4/15.6 kHz
 	3906*12, 5208*12, 7812*12, 10416*12, 15625*12,
 	// $05: PCM16 @ 15.6 kHz, $06: PCM8 @ 15.6 kHz
@@ -58,7 +54,7 @@ static int ADPCMRATEADDTBL[64] = {
 // PCM8PP 模式码 → PcmKind 映射表
 // 参照 MDXWin CPDXCommon.cs
 // 4 = ADPCM, 5 = 16bit PCM, 6 = 8bit PCM
-static int PCM8PP_PCMKIND[64] = {
+inline constexpr int PCM8PP_PCMKIND[64] = {
 	// $00-$04: ADPCM
 	4, 4, 4, 4, 4,
 	// $05: PCM16, $06: PCM8
@@ -85,12 +81,12 @@ static int PCM8PP_PCMKIND[64] = {
 //   模式 $00-$06 和 $28: PCMS16_Volume = 1.0 → 右移 0 位
 //   模式 $07+: PCMS16_Volume = 1/16 → 右移 4 位
 // 仅对 PcmKind == 5 (16-bit PCM) 有效
-static int PCM8PP_PCM16VOLSHIFT[64] = {
+inline constexpr int PCM8PP_PCM16VOLSHIFT[64] = {
 	// $00-$06: 标准模式（无额外缩放）
 	0, 0, 0, 0, 0, 0, 0,
 	// $07-$0F: PCM16 拡張（1/16 缩放）
 	4, 4, 4, 4, 4, 4, 4, 4, 4,
-	// $10-$17: PCM8（此値対 PCM8 无効、仅占位）
+	// $10-$17: PCM8（此値対 PCM8 无效、仅占位）
 	4, 4, 4, 4, 4, 4, 4, 4,
 	// $18-$1F: PCM16 立体声（1/16 缩放）
 	4, 4, 4, 4, 4, 4, 4, 4,
@@ -105,7 +101,7 @@ static int PCM8PP_PCM16VOLSHIFT[64] = {
 	0, 0, 0, 0,
 };
 
-static int PCM8VOLTBL[16] = {
+inline constexpr int PCM8VOLTBL[16] = {
 	2,3,4,5,6,8,10,12,16,20,24,32,40,48,64,80,
 };
 
@@ -113,7 +109,7 @@ static int PCM8VOLTBL[16] = {
 // 覆盖范围: $00-$0C（有效）+ $30-$36（ADPCM 补码）
 // 其余未覆盖的码默认回退到 PCM8PP 行为
 
-static int ADPCMRATEADDTBL_PCM8A[64] = {
+inline constexpr int ADPCMRATEADDTBL_PCM8A[64] = {
 	// $00-$04: ADPCM 3.9k/5.2k/7.8k/10.4k/15.6kHz （与 PCM8PP 相同）
 	3906*12, 5208*12, 7812*12, 10416*12, 15625*12,
 	// $05: PCM16 15.6kHz, $06: PCM8 15.6kHz （与 PCM8PP 相同）
@@ -143,7 +139,7 @@ static int ADPCMRATEADDTBL_PCM8A[64] = {
 };
 
 // PCM8A PcmKind 表（4=ADPCM, 5=PCM16, 6=PCM8）
-static int PCM8A_PCMKIND[64] = {
+inline constexpr int PCM8A_PCMKIND[64] = {
 	4, 4, 4, 4, 4,        // $00-$04: ADPCM
 	5, 6,                 // $05-$06: PCM16, PCM8
 	4,                    // $07: ADPCM 20.8kHz（PCM8A 独有）
@@ -158,7 +154,7 @@ static int PCM8A_PCMKIND[64] = {
 };
 
 // PCM8A PCM16 音量移位（PCM8A 无 1/16 缩放，全部 0）
-static int PCM8A_PCM16VOLSHIFT[64] = {
+inline constexpr int PCM8A_PCM16VOLSHIFT[64] = {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -169,9 +165,5 @@ enum PcmDriverMode {
 	PCM_DRIVER_PCM8PP = 0,  // 默认：PCM8PP (PCM8PP_PCMKIND)
 	PCM_DRIVER_PCM8A  = 1,  // PCM8A (PCM8A_PCMKIND)
 };
-
-
-#endif  // __FMXDRVG_PCM8_GLOBAL_H__
-
 
 // [EOF]

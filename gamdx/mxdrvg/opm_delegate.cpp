@@ -1,73 +1,9 @@
 #include "opm_delegate.h"
-#include "../fmgen/opm.h"
+#include "opm_nuked.h"
 #include "opm_ymfm.h"
 
-class OPMFmgen :public OPM_Delegate {
-public:
-  OPMFmgen() {}
-
-protected:
-  virtual ~OPMFmgen() {}
-
-  virtual void Reset() {
-    OPM.Reset();
-  }
-
-  virtual bool Count(int32 us) {
-    OPM.Count(us);
-    return true;
-  }
-
-  virtual int32 GetNextEvent() {
-    return OPM.GetNextEvent();
-  }
-
-  virtual bool Init(uint c, uint r, bool f) {
-    OPM.Init(c, r, f);
-    return true;
-  }
-
-  virtual void SetReg(uint addr, uint data) {
-    OPM.SetReg(addr, data);
-  }
-
-  /*virtual uint GetReg(uint addr) {
-    return OPM.GetReg(addr);
-    }*/
-
-  virtual uint ReadStatus() {
-    return OPM.ReadStatus();
-  }
-
-  virtual void Mix(short* buffer, int nsamples) {
-    OPM.Mix(buffer, nsamples);
-  }
-
-  virtual void SetVolume(int db) {
-    OPM.SetVolume(db);
-  }
-
-  virtual void SetIrqCallback(CALLBACK *cb) {
-    OPM.callback = cb;
-  }
-
-private:
-  class X68OPM : public FM::OPM {
-  public:
-    virtual void Intr(bool irq) {
-      if (irq) {
-        if (callback) {
-          callback();
-        }
-      }
-    }
-    CALLBACK *callback;
-  };
-  X68OPM OPM;
-};
-
-OPM_Delegate *OPM_Delegate::getFmgen() {
-  return new OPMFmgen();
+OPM_Delegate *OPM_Delegate::getNuked() {
+  return new OPMNuked();
 }
 
 OPM_Delegate *OPM_Delegate::getYmfm() {

@@ -3,11 +3,13 @@
 //   SetDriverMode forwarding, SoftStop (Variable mode state preservation),
 //   SetVariableBaseRate/IsVariableMode/IsVariableRedirectReady APIs
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <string.h>
-#include <assert.h>
+#pragma once
+
+#include <cstdio>
+#include <cstdlib>
+#include <cmath>
+#include <cstring>
+#include <cassert>
 
 #include "../types.h"
 #include "global.h"

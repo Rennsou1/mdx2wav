@@ -1,23 +1,25 @@
-#if !defined(__FMXDRVG_TYPES_H__)
-#define __FMXDRVG_TYPES_H__
+#pragma once
 
-typedef unsigned char uchar;
-typedef unsigned short ushort;
-typedef unsigned int uint;
-typedef unsigned long ulong;
+// 项目全局类型定义
+// 基于 <cstdint> 标准类型，保留遗留别名以兼容 PCM8/MXDRVG 模块
 
-typedef unsigned char uint8;
-typedef unsigned short uint16;
-typedef unsigned int uint32;
+#include <cstdint>
 
-typedef signed char sint8;
-typedef signed short sint16;
-typedef signed int sint32;
+typedef uint8_t   uchar;
+typedef uint16_t  ushort;
+typedef uint32_t  uint;
+typedef uint64_t  ulong;
 
-typedef signed char int8;
-typedef signed short int16;
-typedef signed int int32;
+typedef uint8_t   uint8;
+typedef uint16_t  uint16;
+typedef uint32_t  uint32;
 
-typedef int16 MXDRVG_SAMPLETYPE;				// int16 or int32
+typedef int8_t    sint8;
+typedef int16_t   sint16;
+typedef int32_t   sint32;
 
-#endif // __FMXDRVG_TYPES_H__
+typedef int8_t    int8;
+typedef int16_t   int16;
+typedef int32_t   int32;
+
+typedef int16 MXDRVG_SAMPLETYPE;  // PCM 采样类型: int16

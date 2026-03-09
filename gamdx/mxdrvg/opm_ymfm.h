@@ -1,7 +1,6 @@
 // YMFM (Aaron Giles, BSD-3) 适配器
 // 将 YMFM 的 ym2151 桥接到 gamdx 的 OPM_Delegate 接口
-#if !defined(__OPM_YMFM__)
-#define __OPM_YMFM__
+#pragma once
 
 #include "opm_delegate.h"
 #include "../ymfm/ymfm_opm.h"
@@ -49,5 +48,3 @@ private:
   // IRQ 回调
   CALLBACK      *m_callback;
 };
-
-#endif

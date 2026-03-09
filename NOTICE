@@ -17,22 +17,21 @@ MXDRV / MXDRVg
   Location: gamdx/mxdrvg/
 
 ================================================================================
-fmgen — FM Sound Generator with OPN/OPM interface
+Nuked OPM — Cycle accurate YM2151/YM2164 emulator
 ================================================================================
 
-  Copyright (C) 1998, 2003 cisc (cisc@retropc.net)
+  Copyright (C) 2020, 2026 Nuke.YKT
 
-  Location: gamdx/fmgen/
+  Location: gamdx/nuked/
 
-  License terms (from fmgen/readme.txt):
-    1. Credit the origin (author, copyright) of this software.
-    2. Distribute as free software when redistributing.
-    3. When distributing modified source code, clearly describe the modifications.
-    4. When distributing source code, include this text (readme.txt) unmodified.
-    5. Prior consent from the author is required to embed this source code
-       (in part or whole) into commercial software (shareware included).
+  Licensed under the GNU Lesser General Public License, version 2.1 or later.
 
-  The full original readme.txt is preserved at gamdx/fmgen/readme.txt.
+  Nuked OPM is free software: you can redistribute it and/or modify
+  it under the terms of the GNU Lesser General Public License as
+  published by the Free Software Foundation, either version 2.1
+  of the License, or (at your option) any later version.
+
+  Source: https://github.com/nukeykt/Nuked-OPM
 
 ================================================================================
 YMFM — Yamaha FM sound cores
@@ -80,6 +79,7 @@ Modifications
   Changes to the original mitsuman/mdx2wav:
     - 64-bit (MinGW64) compilation support (pointer truncation fix)
     - YMFM YM2151 emulation engine integration
+    - Replaced fmgen with Nuked OPM (cycle-accurate YM2151 emulator)
     - PCM8A / PCM8PP driver auto-detection via MDX pre-scan
     - Variable frequency PCM support (MXDRVp — developed by Rennsou1_2006 for PCM8PP)
     - MAME-accurate ADPCM decoding (diff_lookup + index_shift)

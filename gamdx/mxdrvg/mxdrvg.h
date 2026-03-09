@@ -3,8 +3,7 @@
 // Modified by Rennsou1_2006 (2026):
 //   YMFM emulation type, PCM8 volume/Variable APIs, HasVariableMode query
 
-#ifndef __MXDRVG_H__
-#define __MXDRVG_H__
+#pragma once
 
 #include "mxdrvg_depend.h"
 
@@ -135,7 +134,7 @@ enum {
 };
 
 enum {
-	MXDRVG_YM2151TYPE_FMGEN = 0,
+	MXDRVG_YM2151TYPE_NUKED = 0,
 	MXDRVG_YM2151TYPE_YMFM,
 };
 
@@ -281,7 +280,3 @@ int MXDRVG_GetChannelMask(
 #define MXDRVG_Cont() MXDRVG_Call( 0x07 )
 #define MXDRVG_Fadeout() MXDRVG_Call_2( 0x0c, 19 )
 #define MXDRVG_Fadeout2(a) MXDRVG_Call_2( 0x0c, (a) )
-
-
-
-#endif //__MXDRVG_H__

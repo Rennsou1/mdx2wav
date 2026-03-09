@@ -4,12 +4,10 @@
 //   Variable frequency mode, PCM8A/PCM8PP runtime switching,
 //   SetDriverMode/SetVariableFreq/SoftStop APIs
 
-#if !defined(__FMXDRVG_PCM8_H__)
-#define __FMXDRVG_PCM8_H__
+#pragma once
 
 namespace X68K
 {
-
 
 class Pcm8 {
 	static const int TotalVolume = 256;
@@ -54,6 +52,9 @@ class Pcm8 {
 	void pcm16_2pcm(int pcm16);
 	void pcm8_2pcm(int pcm8);
 
+	// 统一 PCM 采样获取内部实现（消除 GetPcm22/GetPcm62 重复）
+	int GetPcmInternal(int rateIncrement);
+
 public:
 
 	Pcm8(void);
@@ -81,7 +82,5 @@ public:
 };
 
 }
-
-#endif  // __FMXDRVG_PCM8_H__
 
 // [EOF]

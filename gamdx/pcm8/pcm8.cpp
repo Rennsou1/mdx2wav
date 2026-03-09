@@ -6,8 +6,8 @@
 
 #include "pcm8.h"
 #include "global.h"
-#include <math.h>
-#include <stdio.h>  // 诊断日志用
+#include <cmath>
+#include <cstdio>  // 诊断日志用
 
 namespace X68K
 {
@@ -218,111 +218,67 @@ void Pcm8::pcm8_2pcm(int pcm8) {
 }
 
 
+// ── 统一 PCM 采样获取（消除 GetPcm22/GetPcm62 重复）──
+// 两者唯一差异: rateIncrement（22050Hz 用 15625*12, 62500Hz 用 15625*12*4）
 // -32768<<4 <= retval <= +32768<<4
-int Pcm8::GetPcm22() {
+int Pcm8::GetPcmInternal(int rateIncrement) {
 	if (AdpcmReg & 0x80) {  // ADPCM 停止中
 		return 0x80000000;
 	}
 	RateCounter -= AdpcmRate;
 	while (RateCounter < 0) {
 		if (PcmKind == 5) {  // 16bitPCM
-			int dataH,dataL;
-			dataH = DmaGetByte();
+			int dataH = DmaGetByte();
 			if (dataH == 0x80000000) {
 				RateCounter = 0;
 				AdpcmReg = 0xC7;  // ADPCM 停止
 				return 0x80000000;
 			}
-			dataL = DmaGetByte();
+			int dataL = DmaGetByte();
 			if (dataL == 0x80000000) {
 				RateCounter = 0;
 				AdpcmReg = 0xC7;  // ADPCM 停止
 				return 0x80000000;
 			}
-			pcm16_2pcm((int)(short)((dataH<<8)|dataL));  // 16-bit PCM: pcm16_2pcm で差分積分処理
+			pcm16_2pcm((int)(short)((dataH<<8)|dataL));
 		} else if (PcmKind == 6) {  // 8bitPCM
-			int data;
-			data = DmaGetByte();
+			int data = DmaGetByte();
 			if (data == 0x80000000) {
 				RateCounter = 0;
 				AdpcmReg = 0xC7;  // ADPCM 停止
 				return 0x80000000;
 			}
-			pcm8_2pcm((int)(char)data);  // 8-bit PCM: 直接スケーリング
-		} else {
-			int N10Data;  // (N1Data << 4) | N0Data
-			if (N1DataFlag == 0) {  // 次のADPCMデータが内部にない場合
-				N10Data = DmaGetByte();  // DMA転送(1バイト)
+			pcm8_2pcm((int)(char)data);
+		} else {  // ADPCM
+			int N10Data;
+			if (N1DataFlag == 0) {
+				N10Data = DmaGetByte();
 				if (N10Data == 0x80000000) {
 					RateCounter = 0;
 					AdpcmReg = 0xC7;  // ADPCM 停止
 					return 0x80000000;
 				}
-				adpcm2pcm(N10Data & 0x0F);  // InpPcm に値が入る
+				adpcm2pcm(N10Data & 0x0F);
 				N1Data = (N10Data >> 4) & 0x0F;
 				N1DataFlag = 1;
 			} else {
-				adpcm2pcm(N1Data);  // InpPcm に値が入る
+				adpcm2pcm(N1Data);
 				N1DataFlag = 0;
 			}
 		}
-		RateCounter += 15625*12;
+		RateCounter += rateIncrement;
 	}
 	return (InpPcm * Volume) >> 9;
 }
 
 
-// -32768<<4 <= retval <= +32768<<4
+int Pcm8::GetPcm22() {
+	return GetPcmInternal(15625 * 12);
+}
+
+
 int Pcm8::GetPcm62() {
-	if (AdpcmReg & 0x80) {  // ADPCM 停止中
-		return 0x80000000;
-	}
-	RateCounter -= AdpcmRate;
-	while (RateCounter < 0) {
-		if (PcmKind == 5) {  // 16bitPCM
-			int dataH,dataL;
-			dataH = DmaGetByte();
-			if (dataH == 0x80000000) {
-				RateCounter = 0;
-				AdpcmReg = 0xC7;  // ADPCM 停止
-				return 0x80000000;
-			}
-			dataL = DmaGetByte();
-			if (dataL == 0x80000000) {
-				RateCounter = 0;
-				AdpcmReg = 0xC7;  // ADPCM 停止
-				return 0x80000000;
-			}
-			pcm16_2pcm((int)(short)((dataH<<8)|dataL));  // 16-bit PCM: pcm16_2pcm で差分積分処理
-		} else if (PcmKind == 6) {  // 8bitPCM
-			int data;
-			data = DmaGetByte();
-			if (data == 0x80000000) {
-				RateCounter = 0;
-				AdpcmReg = 0xC7;  // ADPCM 停止
-				return 0x80000000;
-			}
-			pcm8_2pcm((int)(char)data);  // 8-bit PCM: 直接スケーリング
-		} else {
-			int N10Data;  // (N1Data << 4) | N0Data
-			if (N1DataFlag == 0) {  // 次のADPCMデータが内部にない場合
-				N10Data = DmaGetByte();  // DMA転送(1バイト)
-				if (N10Data == 0x80000000) {
-					RateCounter = 0;
-					AdpcmReg = 0xC7;  // ADPCM 停止
-					return 0x80000000;
-				}
-				adpcm2pcm(N10Data & 0x0F);  // InpPcm に値が入る
-				N1Data = (N10Data >> 4) & 0x0F;
-				N1DataFlag = 1;
-			} else {
-				adpcm2pcm(N1Data);  // InpPcm に値が入る
-				N1DataFlag = 0;
-			}
-		}
-		RateCounter += 15625*12*4;
-	}
-	return (InpPcm * Volume) >> 9;
+	return GetPcmInternal(15625 * 12 * 4);
 }
 
 
