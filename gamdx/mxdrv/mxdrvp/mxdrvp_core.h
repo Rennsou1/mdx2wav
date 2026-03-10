@@ -5652,8 +5652,21 @@ L0011dc:;
 	D1 = 0x00;
 	D0 = *(A4++);
 	D1 = D0;
-	if ( (SBYTE)D1 >= 0 ) goto L001216;
+	if ( (SBYTE)D1 >= 0 ) {
+		// [MXDRVp fix] Rest 命令：对 PCM 通道显式停止 PCM 播放
+		// 原版 MXDRV 依赖 DMA 自然结束，短采样通常在 rest 前就播放完毕。
+		// 但当采样较长时，PCM 会在 rest 期间继续播放产生残留低频音。
+		// 注意: 不能使用 L000ff6()，因为其 PCM8_SUB 路径中
+		// pan=S0018&0x03 对 ch≥0x81 不为 0，导致 Pcm8::Out
+		// 走 SetMode 路径而非停止。直接调用 PCM8.Out(ch,0,0,0)
+		// 确保 pan=0 → AdpcmReg=0xC7 正确停止。
+		if ( (SBYTE)A6->S0018 < 0 && G.L002231 != 0 ) {
+			PCM8.Out(A6->S0018 & 0x07, 0, 0, 0);
+		}
+		goto L001216;
+	}
 	if ( D0 >= 0xe0 ) goto L00122e;
+
 	D0 &= 0x007f;
 	D0 <<= 6;
 	D0 += 5;

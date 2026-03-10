@@ -11,7 +11,7 @@ Sharp X68000 MDX 音乐格式离线渲染器，将 MDX/PDX 文件直接转换为
 - **ReplayGain**：两遍渲染峰值归一化，自动音量平衡
 - **原生采样率**：62500 Hz 输出，保留 X68000 原始音质特征
 - **可变频率 PCM**：MXDRVp Variable 模式，单样本多音高回放
-- **MXDRV Bug 修复**：KeyOn 延迟间隙、同步信号偏差、硬件 LFO 状态残留
+- **MXDRV Bug 修复**：KeyOn 延迟间隙、同步信号偏差、硬件 LFO 状态残留、Rest 命令 PCM 停止
 
 ## 驱动类型
 
@@ -158,6 +158,7 @@ Apache License 2.0 — 详见 [LICENSE](LICENSE)
 - 原始 MXDRV：milk., K.MAEKAWA, Missy.M, Yatsube (1988-92)
 - MXDRVg Win32 移植：GORRY (2000-2011)
 - mdx2wav：@__mtm (2014)
+- MDXWin：PCM 回放参考实现
 - Nuked OPM：Nuke.YKT
 - YMFM：Aaron Giles
 
