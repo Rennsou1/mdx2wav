@@ -89,6 +89,6 @@ Modifications
     - JSON metadata extraction (-i flag: driver type, BPM, duration)
     - Native 62500Hz output (no resampling)
     - Windows binary mode stdout fix
-    - MXDRV original bug fixes (referenced from MDXWin):
+    - MXDRV original bug fixes:
         KeyOn delay gap, sync signal 1-tick offset,
-        hardware LFO phase offset
+        hardware LFO state residue on loop

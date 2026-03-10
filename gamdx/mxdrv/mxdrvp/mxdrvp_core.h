@@ -3927,11 +3927,8 @@ L000bfa:;
 														bne     L000c0c
 														bsr     L000c66
 */
-	// [MXDRVp fix] 同步信号 1-tick 偏差修复：
-	// 交换 L001050/L0011b4 顺序，让 tick/sync 处理先于 portamento/LFO，
-	// 使同帧内后续通道能立即收到前序通道发出的 sync signal。
-	L0011b4();
 	L001050();
+	L0011b4();
 	D0 = G.L001e1c;
 	if ( D0 & (1<<D7) ) goto L000c0c;
 	L000c66();
@@ -3961,9 +3958,8 @@ L000c22:;
 														bne     L000c34
 														bsr     L000c66
 */
-	// [MXDRVp fix] 同步信号 1-tick 偏差修复（PCM 通道）
-	L0011b4();
 	L001050();
+	L0011b4();
 	D0 = G.L001e1c;
 	if ( D0 & (1<<D7) ) goto L000c34;
 	L000c66();
@@ -3984,6 +3980,31 @@ L000c40:;
 														bsr     L000756
 */
 	L000756();
+
+// [MXDRVp fix] 帧後 sync 補償：
+// 修復後序通道→前序通道的 sync signal 1-tick 偏差。
+// 主循環按通道 0→15 順序處理，當後序通道發出 $FC sync 時，
+// 前序通道本幀已處理完畢，要等下一幀才能響應。
+// 這裡在所有通道處理完後，補償檢查仍在 sync wait 的通道。
+	{
+		int maxCh = G.L001df4 ? 16 : 9;
+		for (int ch = 0; ch < maxCh; ch++) {
+			if (ch < 9) {
+				A6 = &MXDRVG_WORK_CHBUF_FM[ch];
+			} else {
+				A6 = &MXDRVG_WORK_CHBUF_PCM[ch - 9];
+			}
+			D7 = ch;
+			// 通道处于 sync wait (S0017 bit3) 且 sync flag 已到达
+			if ((A6->S0017 & (1<<3)) && G.L001df6[ch]) {
+				L001192();  // 清除 sync flag，恢复序列处理
+				D0 = G.L001e1c;
+				if (!(D0 & (1<<D7))) {
+					L000c66();  // 输出该通道的音符
+				}
+			}
+		}
+	}
 
 // L000c44:;
 /*
@@ -4064,12 +4085,6 @@ L000cb4:;
 														bsr     L000dfe
 */
 	A6->S000c = CLR;
-	// [MXDRVp fix] 硬件 LFO 修复：KeyOn 时重写 PMS/AMS 到 OPM $38+ch，
-	// 确保换音色后 LFO 参数始终与 S0021 一致。
-	D1 = 0x38;
-	D1 += A6->S0018;
-	D2 = A6->S0021;
-	L_WRITEOPM();
 	L000cdc();
 	L000dfe();
 
@@ -4315,6 +4330,11 @@ L000dde:;
 	if ( D0-- != 0 ) goto L000dde;
 	A6->S0023 = SET;
 	A6->S0017 |= 0x64;
+	// [MXDRVp fix] 硬件 LFO 修复：音色切换时同步 PMS/AMS 到 OPMBUF 影子缓冲区。
+	// 原版 L000d84 写完 $40-$F8 后从不触及 $38，导致 OPMBUF 与 S0021 不一致。
+	// 注意：不能调用 L_WRITEOPM (→ OPM_SUB → YMFM SetReg)，
+	// 因为 YMFM 处理 $38 写入时会产生副作用导致音高偏移。
+	OPMBUF[0x38 + A6->S0018] = A6->S0021;
 
 L000df4:;
 /*
