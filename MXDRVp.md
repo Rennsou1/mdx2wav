@@ -47,6 +47,22 @@ mdx2wav 通过预扫描 MDX 数据中的 `$ED` 命令自动判定驱动类型：
 -   检测到 Variable 模式码（`$ED $07` 或 `$ED $28`）→ MXDRVp
 -   `$ED $07` 仅在 PCM8PP 驱动下被视为 Variable（PCM8A 驱动下 `$07` 是 ADPCM 20.8 kHz）
 
+## MXDRV 原始 Bug 修复
+
+MXDRVp 在 MXDRVg 的基础上修复了以下继承自原版 MXDRV 的 bug（参照 MDXWin 的修复方式）：
+
+### KeyOn Delay 间隙
+
+原版 MXDRV 在 KeyOn 延迟 (`S0020`) 到期后，需等到下一帧才执行 KeyOn，导致多一帧的静音间隙。修复方式：当 `S0020` 减到 0 时，立即递归进入 KeyOn 路径，消除额外的 1 帧延迟。
+
+### 同步信号 1-tick 偏差
+
+原版 MXDRV 在每帧通道处理中，先执行 Portamento/LFO (`L001050`)，再执行 Tick/Sync (`L0011b4`)。当前序通道发出同步信号 (`$FC`) 时，后序通道已在本帧完成 Tick 处理，无法立即响应。修复方式：交换二者的调用顺序，使同帧内后续通道能在 Tick 处理阶段立即收到同步信号。
+
+### 硬件 LFO 相位偏差
+
+原版 MXDRV 在 KeyOn 时未重写 PMS/AMS (`S0021`) 到 OPM 寄存器 `$38`。当通道换音色后重新 KeyOn，硬件 LFO 的 PMS/AMS 参数可能与通道状态不一致。修复方式：在 KeyOn 路径中补写 `S0021` 到 OPM `$38+ch`。
+
 ## X68000 实机可行性
 
 MXDRVp 的 Variable 模式在技术层面是一项 **纯软件扩展**，不依赖任何额外硬件，也不修改 Mercury Unit 的硬件接口。理论上，只要 X68000 实机配备 Mercury Unit 并运行 PCM8PP 驱动，MXDRVp 的数据格式即可被解析。

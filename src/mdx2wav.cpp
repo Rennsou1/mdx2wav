@@ -3,6 +3,7 @@
 // Modified by Rennsou1_2006 (2026):
 //   直接 WAV 文件输出（拖入 MDX 即用）、ReplayGain 峰值归一化、
 //   JSON 元数据提取、Variable 频率 PCM (MXDRVp)、62500Hz 原生输出
+//   双核心架构: MXDRVg / MXDRVp，运行时切换
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -15,11 +16,83 @@
 #include <unistd.h>
 #include <io.h>
 
-#include "../gamdx/mxdrvg/mxdrvg.h"
+#include "../gamdx/mxdrv/mxdrv_api.h"
 
-#define VERSION "2.0"
+#define VERSION "3.0"
 
 static bool verbose = false;
+
+// ═══════════════════════════════════════════
+// MXDRV 核心分发表 — 运行时函数指针切换
+// ═══════════════════════════════════════════
+struct MXDRVDispatch {
+  const char *name;  // 核心名称（用于日志）
+  void (*SetEmulationType)(int);
+  int  (*Start)(int, int, int, int);
+  void (*End)(void);
+  int  (*GetPCM)(SWORD*, int);
+  void (*TotalVolume)(int);
+  int  (*GetTotalVolume)(void);
+  void (*SetData)(void*, ULONG, void*, ULONG);
+  void volatile *(*GetWork)(int);
+  ULONG (*MeasurePlayTime)(int, int);
+  void (*PlayAt)(ULONG, int, int);
+  int  (*GetTerminated)(void);
+  void (*Fadeout)(void);
+  void (*Stop)(void);
+  // MXDRVp 专有（MXDRVg 使用空实现）
+  void (*SetPCM8Volume)(int);
+  void (*SetPCM8VariableBaseRate)(int);
+  int  (*HasVariableMode)(void);
+};
+
+// MXDRVp 专有 API 的空实现（用于 MXDRVg 分发表）
+static void  stub_SetPCM8Volume(int) {}
+static void  stub_SetPCM8VariableBaseRate(int) {}
+static int   stub_HasVariableMode(void) { return 0; }
+
+static const MXDRVDispatch dispatch_mxdrvg = {
+  "MXDRVg-64",
+  mxdrvg_SetEmulationType,
+  mxdrvg_Start,
+  mxdrvg_End,
+  mxdrvg_GetPCM,
+  mxdrvg_TotalVolume,
+  mxdrvg_GetTotalVolume,
+  mxdrvg_SetData,
+  mxdrvg_GetWork,
+  mxdrvg_MeasurePlayTime,
+  mxdrvg_PlayAt,
+  mxdrvg_GetTerminated,
+  mxdrvg_Fadeout,
+  mxdrvg_Stop,
+  stub_SetPCM8Volume,
+  stub_SetPCM8VariableBaseRate,
+  stub_HasVariableMode,
+};
+
+static const MXDRVDispatch dispatch_mxdrvp = {
+  "MXDRVp",
+  mxdrvp_SetEmulationType,
+  mxdrvp_Start,
+  mxdrvp_End,
+  mxdrvp_GetPCM,
+  mxdrvp_TotalVolume,
+  mxdrvp_GetTotalVolume,
+  mxdrvp_SetData,
+  mxdrvp_GetWork,
+  mxdrvp_MeasurePlayTime,
+  mxdrvp_PlayAt,
+  mxdrvp_GetTerminated,
+  mxdrvp_Fadeout,
+  mxdrvp_Stop,
+  mxdrvp_SetPCM8Volume,
+  mxdrvp_SetPCM8VariableBaseRate,
+  mxdrvp_HasVariableMode,
+};
+
+// 全局活跃核心指针（默认 MXDRVp）
+static const MXDRVDispatch *drv = &dispatch_mxdrvp;
 
 static constexpr int MAGIC_OFFSET = 10;
 
@@ -284,19 +357,19 @@ static bool LoadMDX(const char *mdx_name, char *title, int title_len, MdxInfo *i
     }
   }
 
-  MXDRVG_SetData(mdx_head, mdx_size, pdx_buf, pdx_size);
+  drv->SetData(mdx_head, mdx_size, pdx_buf, pdx_size);
 
   // 查询预扫描检测到的 Variable 模式标志（必须在 SetData 之后）
   if (info) {
-    info->has_variable = MXDRVG_HasVariableMode();
+    info->has_variable = drv->HasVariableMode();
   }
 
-  // 必须在 MXDRVG_SetData 之后设置，因为 SetData 内部会调用 Init() 重置基准采样率
+  // 必须在 SetData 之后设置，因为 SetData 内部会调用 Init() 重置基准采样率
   if (pdx_sample_rate > 0) {
     if (verbose) {
       fprintf(stderr, "Setting Variable Base Rate to %d Hz\n", pdx_sample_rate);
     }
-    MXDRVG_SetPCM8VariableBaseRate(pdx_sample_rate);
+    drv->SetPCM8VariableBaseRate(pdx_sample_rate);
     if (info) {
       info->pdx_sample_rate = pdx_sample_rate;
     }
@@ -326,6 +399,8 @@ static void help() {
     "  Drag and drop an MDX file onto mdx2wav.exe to convert.\n"
     "\n"
     "Options:\n"
+    "  -c <core> : select MXDRV core: mxdrvg (original) or mxdrvp (enhanced).\n"
+    "              (default: mxdrvp)\n"
     "  -o <file> : specify output WAV filename.\n"
     "  -r        : raw mode, output 16bit stereo PCM to stdout (no WAV header).\n"
     "  -d <sec>  : limit song duration. 0 means nolimit. (default:300)\n"
@@ -396,13 +471,13 @@ static void make_wav_filename(char *out, size_t out_size, const char *mdx_name) 
 
 // ── 辅助：重置播放状态（消除 PlayAt 后重复设置 Variable/PCM8Volume 的代码）──
 static void ResetPlayback(int loop, int fadeout, const MdxInfo &info) {
-  MXDRVG_PlayAt(0, loop, fadeout);
+  drv->PlayAt(0, loop, fadeout);
   // PlayAt 内部重新初始化 PCM8，必须重新设置 Variable 基准采样率
   if (info.pdx_sample_rate > 0) {
-    MXDRVG_SetPCM8VariableBaseRate(info.pdx_sample_rate);
+    drv->SetPCM8VariableBaseRate(info.pdx_sample_rate);
   }
   // 恢复 OPM/PCM 平衡比
-  MXDRVG_SetPCM8Volume(-11);
+  drv->SetPCM8Volume(-11);
 }
 
 
@@ -423,10 +498,14 @@ int main(int argc, char **argv) {
   int loop = 2;
   int fadeout = 1;  // 默认启用淡出
   char ym2151_type[8] = "ymfm";  // 默认 YMFM 引擎
+  char core_type[8] = "mxdrvp";  // 默认 MXDRVp 核心
 
   int opt;
-  while ((opt = getopt(argc, argv, "d:e:fil:mo:rvV")) != -1) {
+  while ((opt = getopt(argc, argv, "c:d:e:fil:mo:rvV")) != -1) {
     switch (opt) {
+      case 'c':
+        strncpy(core_type, optarg, sizeof(core_type) - 1);
+        break;
       case 'd':
         max_song_duration = atof(optarg);
         break;
@@ -471,17 +550,30 @@ int main(int argc, char **argv) {
     return 0;
   }
 
+  // ── 核心选择 ──
+  if (0 == strcmp(core_type, "mxdrvg")) {
+    drv = &dispatch_mxdrvg;
+  } else if (0 == strcmp(core_type, "mxdrvp")) {
+    drv = &dispatch_mxdrvp;
+  } else {
+    fprintf(stderr, "Invalid MXDRV core type: %s (use mxdrvg or mxdrvp).\n", core_type);
+    return -1;
+  }
+  if (verbose) {
+    fprintf(stderr, "Using MXDRV core: %s\n", drv->name);
+  }
+
   if (0 == strcmp(ym2151_type, "nuked")) {
-    MXDRVG_SetEmulationType(MXDRVG_YM2151TYPE_NUKED);
+    drv->SetEmulationType(MXDRVG_YM2151TYPE_NUKED);
   } else if (0 == strcmp(ym2151_type, "ymfm")) {
-    MXDRVG_SetEmulationType(MXDRVG_YM2151TYPE_YMFM);
+    drv->SetEmulationType(MXDRVG_YM2151TYPE_YMFM);
   } else {
     fprintf(stderr, "Invalid ym2151 emulation type: %s.\n", ym2151_type);
     return -1;
   }
 
-  MXDRVG_Start(SAMPLE_RATE, filter_mode, 256 * 1024, 1024 * 1024);
-  MXDRVG_TotalVolume(256);
+  drv->Start(SAMPLE_RATE, filter_mode, 256 * 1024, 1024 * 1024);
+  drv->TotalVolume(256);
 
   char title[256];
   MdxInfo mdx_info;
@@ -501,9 +593,9 @@ int main(int argc, char **argv) {
   // 初始默认值 200，需要在播放处理后读取
   // MXDRVG_MeasurePlayTime 会完整走一遍 MML，@t 会被处理
   volatile MXDRVG_WORK_GLOBAL *gwork =
-    (volatile MXDRVG_WORK_GLOBAL *)MXDRVG_GetWork(MXDRVG_WORKADR_GLOBAL);
+    (volatile MXDRVG_WORK_GLOBAL *)drv->GetWork(MXDRVG_WORKADR_GLOBAL);
 
-  float song_duration = MXDRVG_MeasurePlayTime(loop, fadeout) / 1000.0f;
+  float song_duration = drv->MeasurePlayTime(loop, fadeout) / 1000.0f;
   // Warning: MXDRVG_MeasurePlayTime calls MXDRVG_End internaly,
   //          thus we need to call MXDRVG_PlayAt due to reset playing status.
 
@@ -597,7 +689,7 @@ int main(int argc, char **argv) {
       (int)(song_duration * 1000),
       total_clock
     );
-    MXDRVG_End();
+    drv->End();
     return 0;
   }
 
@@ -621,8 +713,8 @@ int main(int argc, char **argv) {
   short peak = 0;
   uint32_t total_samples = 0;  // 总立体声采样数
   for (int i = 0; song_duration == 0.0f || 1.0f * i * AUDIO_BUF_SAMPLES / SAMPLE_RATE < song_duration; i++) {
-    if (MXDRVG_GetTerminated()) break;
-    int len = MXDRVG_GetPCM(audio_buf, AUDIO_BUF_SAMPLES);
+    if (drv->GetTerminated()) break;
+    int len = drv->GetPCM(audio_buf, AUDIO_BUF_SAMPLES);
     if (len <= 0) break;
     total_samples += len;
     for (int j = 0; j < len * 2; j++) {
@@ -663,7 +755,7 @@ int main(int argc, char **argv) {
     if (!out_fp) {
       fprintf(stderr, "Cannot create output file: %s\n", output_path);
       delete[] audio_buf;
-      MXDRVG_End();
+      drv->End();
       return -1;
     }
     writing_wav = true;
@@ -678,11 +770,11 @@ int main(int argc, char **argv) {
 
   // 第二遍: 重新渲染并输出
   ResetPlayback(loop, fadeout, mdx_info);
-  MXDRVG_TotalVolume(replayGainVol);
+  drv->TotalVolume(replayGainVol);
 
   for (int i = 0; song_duration == 0.0f || 1.0f * i * AUDIO_BUF_SAMPLES / SAMPLE_RATE < song_duration; i++) {
-    if (MXDRVG_GetTerminated()) break;
-    int len = MXDRVG_GetPCM(audio_buf, AUDIO_BUF_SAMPLES);
+    if (drv->GetTerminated()) break;
+    int len = drv->GetPCM(audio_buf, AUDIO_BUF_SAMPLES);
     if (len <= 0) break;
     fwrite(audio_buf, len, 4, out_fp);
   }
@@ -694,7 +786,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Done: %.1fs, %u samples -> %s\n", dur, total_samples, output_path);
   }
 
-  MXDRVG_End();
+  drv->End();
   delete[] audio_buf;
 
   return 0;

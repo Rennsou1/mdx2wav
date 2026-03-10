@@ -14,6 +14,9 @@ Makefile
 #文档
 PCM8PP83/
 Sources/
+_mxdrvgbak
+MXDRV206/
+docs/
 
 # 测试用音乐文件（版权素材，不应提交）
 *.mdx
@@ -21,6 +24,7 @@ Sources/
 *.mus
 *.wav
 test/
+MDXPlayer/
 
 # IDE / 编辑器
 .vscode/

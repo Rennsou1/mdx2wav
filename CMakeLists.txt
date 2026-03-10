@@ -10,10 +10,13 @@ set(CMAKE_C_STANDARD 11)
 add_executable(mdx2wav
 	src/mdx2wav.cpp
 	gamdx/nuked/opm.c
-	gamdx/mxdrvg/so.cpp
-	gamdx/mxdrvg/opm_delegate.cpp
-	gamdx/mxdrvg/opm_nuked.cpp
-	gamdx/mxdrvg/opm_ymfm.cpp
+	# MXDRV 双核心
+	gamdx/mxdrv/mxdrvg64/so_mxdrvg.cpp  # MXDRVg-64
+	gamdx/mxdrv/mxdrvp/so_mxdrvp.cpp    # MXDRVp
+	# 共享组件
+	gamdx/mxdrv/opm_delegate.cpp
+	gamdx/mxdrv/opm_nuked.cpp
+	gamdx/mxdrv/opm_ymfm.cpp
 	gamdx/pcm8/pcm8.cpp
 	gamdx/pcm8/x68pcm8.cpp
 	gamdx/ymfm/ymfm_opm.cpp
@@ -23,7 +26,11 @@ add_executable(mdx2wav
 target_include_directories(mdx2wav PRIVATE ${CMAKE_SOURCE_DIR})
 
 # 编译选项：使用 target 级别替代全局变量
+# -fpermissive: MXDRV 原版代码使用 ULONG (32-bit) 模拟 X68000 D 寄存器，
+#   偶尔存储指针值，在 64-bit 下会产生精度丢失警告。
+#   这是 GORRY 原版翻译的固有特征，不影运行时正确性（指针只在 A 寄存器间传递）。
 target_compile_options(mdx2wav PRIVATE
+	-fpermissive
 	$<$<CONFIG:Release>:-Wall -O3>
 	$<$<CONFIG:Debug>:-Wall -g>
 )
