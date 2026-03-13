@@ -1,6 +1,6 @@
 # mdx2wav
 
-Sharp X68000 MDX 音乐格式离线渲染器，将 MDX/PDX 文件直接转换为 WAV 文件（62500 Hz、16-bit stereo）。
+Sharp X68000 MDX 音乐格式渲染器，将 MDX/PDX 文件直接转换为 WAV 文件（62500 Hz、16-bit stereo）。
 基于 **MXDRVg V1.50a** © 2000 GORRY，从 X68k MXDRV music driver version 2.06+17 Rel.X5-S 移植而来。
 
 ## 驱动类型
