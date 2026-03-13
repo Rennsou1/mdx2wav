@@ -284,12 +284,8 @@ int Pcm8::GetPcm62() {
 
 Pcm8::Pcm8(void) {
 	DriverMode = PCM_DRIVER_PCM8PP;
-	VariableMode = 0;
-	VariableHasBase = 0;
-	VariableBaseAddr = NULL;
-	VariableBaseLen = 0;
-	VariableBaseRate = 15625*12;
-	VariableBaseNote = 0;
+	Var.Clear();
+	Var.baseRate = 15625*12;
 	Mode = 0x00080403;
 	SetMode(Mode);
 }
@@ -303,12 +299,8 @@ void Pcm8::Init() {
 	Pcm16Prev = 0;
 	Pcm16VolumeShift = 0;
 	DriverMode = PCM_DRIVER_PCM8PP;  // 默认 PCM8PP（可由预扫描覆盖）
-	VariableMode = 0;
-	VariableHasBase = 0;
-	VariableBaseAddr = NULL;
-	VariableBaseLen = 0;
-	VariableBaseRate = 15625*12;
-	VariableBaseNote = 0;
+	Var.Clear();
+	Var.baseRate = 15625*12;
 	InpPcm = InpPcm_prev = OutPcm = 0;
 	OutInpPcm = OutInpPcm_prev = 0;
 	AdpcmRate = 15625*12;
@@ -342,21 +334,28 @@ int Pcm8::Out(void *adrs, int mode, int len) {
 	int note = (mode >> 24) & 0xFF;
 	int pan = mode & 0x03;
 
-	// ── 先调用 SetMode 以建立 VariableMode 状态 ──
-	// 但对于 stop/control 调用(pan=0)，跳过 SetMode 以避免破坏 Variable 状态
+	// ── 调用 SetMode 以建立 Variable 状态 ──
+	// stop/control 调用(pan=0) 跳过 SetMode，避免破坏 Variable 状态
+	int freq_byte = (mode >> 8) & 0xFF;
 	if (pan != 0) {
 		SetMode(mode);
 	}
 
-	// len=0 的 Variable 重定向需要 pan!=0 且 VariableHasBase
-	if (len <= 0 && !(VariableMode && VariableHasBase && len == 0 && pan != 0)) {
+	// Variable 重定向判定：pan!=0, 已捕获 base, freq=0xFF 且 vol=0xFF(skip)
+	// vol=0xFF 区分真正 redirect（L000f28 空 slot）和音量更新（L001012）
+	int vol_byte = (mode >> 16) & 0xFF;
+	bool is_var_redirect = (Var.IsReady() && len == 0 && pan != 0 && freq_byte == 0xFF && vol_byte == 0xFF);
+	if (len <= 0 && !is_var_redirect) {
 		if (len < 0) {
 			return GetRest();
 		} else {
-			// stop/key-off: 仅停止播放
+			// stop/key-off 或普通 mode-set (len=0)
 			if (pan == 0) {
 				AdpcmReg = 0xC7;
 				DmaMtc = 0;
+			} else if (Var.mode && !Var.hasBase) {
+				// mode-set 调用：暂存 note 作为基准音符（capture 时使用）
+				Var.pendingNote = note;
 			}
 			return 0;
 		}
@@ -365,32 +364,31 @@ int Pcm8::Out(void *adrs, int mode, int len) {
 	AdpcmReg = 0xC7;
 	DmaMtc = 0;
 
-	// Variable 模式重定向逻辑（仅对实际音符触发，pan!=0）
-	if (VariableMode) {
-		if (!VariableHasBase) {
+	// ── Variable 模式重定向逻辑 ──
+	if (Var.mode) {
+		if (!Var.hasBase) {
 			// 首次播放：捕获 base
-			VariableBaseAddr = adrs;
-			VariableBaseLen  = len;
-			VariableBaseNote = note;
-			VariableHasBase  = 1;
+			Var.baseAddr = adrs;
+			Var.baseLen  = len;
+			Var.baseNote = (Var.pendingNote != 0) ? Var.pendingNote : note;
+			Var.hasBase  = 1;
 #ifdef PCM8_DEBUG
-			fprintf(stderr, "[VAR CAPTURE] note=%d addr=%p len=%d baseRate=%d\n",
-				note, adrs, len, VariableBaseRate);
+			fprintf(stderr, "[VAR CAPTURE] baseNote=%d playNote=%d addr=%p len=%d baseRate=%d\n",
+				Var.baseNote, note, adrs, len, Var.baseRate);
 #endif
 		} else if (len == 0) {
 			// 空 slot 重定向到 base 数据
-			adrs = VariableBaseAddr;
-			len  = VariableBaseLen;
+			adrs = Var.baseAddr;
+			len  = Var.baseLen;
 #ifdef PCM8_DEBUG
 			fprintf(stderr, "[VAR REDIRECT] note=%d baseNote=%d addr=%p len=%d\n",
-				note, VariableBaseNote, adrs, len);
+				note, Var.baseNote, adrs, len);
 #endif
 		}
-		// 计算音高偏移后的回放频率
 		SetVariableFreq(note);
 #ifdef PCM8_DEBUG
 		fprintf(stderr, "[VAR FREQ] note=%d diff=%d AdpcmRate=%d\n",
-			note, note - VariableBaseNote, AdpcmRate);
+			note, note - Var.baseNote, AdpcmRate);
 #endif
 	}
 
@@ -401,7 +399,7 @@ int Pcm8::Out(void *adrs, int mode, int len) {
 		AdpcmReg = 0x47;
 #ifdef PCM8_DEBUG
 		fprintf(stderr, "[PCM8 PLAY] mode=0x%08X PcmKind=%d AdpcmRate=%d DmaMtc=%u note=%d VarMode=%d\n",
-			Mode, PcmKind, AdpcmRate, DmaMtc, note, VariableMode);
+			Mode, PcmKind, AdpcmRate, DmaMtc, note, Var.mode);
 #endif
 	}
 	return 0;
@@ -471,22 +469,20 @@ int Pcm8::SetMode(int mode) {
 		}
 		// 可变频率模式检测：AdpcmRate==0 表示 Variable 模式码
 		if (AdpcmRate == 0) {
-			if (!VariableMode) {
+			if (!Var.mode) {
 				// 首次进入 Variable 模式：初始化状态
-				VariableMode = 1;
-				VariableHasBase = 0;
-				VariableBaseAddr = NULL;
-				VariableBaseLen = 0;
+				Var.mode = 1;
+				Var.hasBase = 0;
+				Var.baseAddr = NULL;
+				Var.baseLen = 0;
 			}
-			// 为 Variable 模式设置安全默认（会被 SetVariableFreq 覆盖）
-			AdpcmRate = VariableBaseRate;
+			// 安全默认频率（会被 SetVariableFreq 覆盖）
+			AdpcmRate = Var.baseRate;
 		} else {
-			// 固定频率模式：记录为潜在的 VariableBaseRate
-			VariableBaseRate = AdpcmRate;
-			// 注意：不在此处清除 VariableMode/VariableHasBase
-			// Variable 模式一旦通过 $ED 命令 (mode $07) 激活，
-			// 就保持到下一次显式的 $ED 非 Variable 模式设定
-			// （通过 key-off / ADPCMMOD_STOP 传入的 mode=0 不应破坏状态）
+			// 固定频率模式：记录为潜在基准率
+			Var.baseRate = AdpcmRate;
+			// 乐器切换到非 Variable 模式时清除状态
+			if (Var.mode) Var.Clear();
 		}
 		Mode = (Mode&0xFFFF00FF)|(m<<8);
 #ifdef PCM8_DEBUG
@@ -541,6 +537,14 @@ int Pcm8::GetDriverMode() {
 	return DriverMode;
 }
 
+bool Pcm8::IsModeCodeVariable(int mode_byte) const {
+	int m = mode_byte & 0x3f;
+	if (DriverMode == PCM_DRIVER_PCM8A) {
+		return ADPCMRATEADDTBL_PCM8A[m] == 0;
+	}
+	return ADPCMRATEADDTBL[m] == 0;
+}
+
 
 void Pcm8::SoftStop() {
 	// 停止当前播放，保留 Variable 模式状态
@@ -558,19 +562,18 @@ void Pcm8::SoftStop() {
 
 
 void Pcm8::SetVariableFreq(int note) {
-	// 可变频率计算：根据音符偏移算回放频率
-	// rate = base_rate × 2^((note - base_note) / 12)
-	if (VariableBaseRate <= 0) return;
-	int diff = note - VariableBaseNote;
+	// 可变频率计算：rate = baseRate × 2^((note - baseNote) / 12)
+	if (Var.baseRate <= 0) return;
+	int diff = note - Var.baseNote;
 	if (diff == 0) {
-		AdpcmRate = VariableBaseRate;
+		AdpcmRate = Var.baseRate;
 	} else {
-		AdpcmRate = (int)(VariableBaseRate * pow(2.0, diff / 12.0));
+		AdpcmRate = (int)(Var.baseRate * pow(2.0, diff / 12.0));
 	}
 	if (AdpcmRate <= 0) AdpcmRate = 1;  // 防止零频率死循环
 #ifdef PCM8_DEBUG
 	fprintf(stderr, "[PCM8 Variable] note=%d base=%d diff=%d rate=%d->%d\n",
-		note, VariableBaseNote, diff, VariableBaseRate, AdpcmRate);
+		note, Var.baseNote, diff, Var.baseRate, AdpcmRate);
 #endif
 }
 
@@ -578,7 +581,7 @@ void Pcm8::SetVariableFreq(int note) {
 /// rate_hz: 原始 WAV 采样率 (Hz)，例如 12000
 void Pcm8::SetVariableBaseRate(int rate_hz) {
 	if (rate_hz > 0) {
-		VariableBaseRate = rate_hz * 12;  // 转换到内部格式 Hz×12
+		Var.baseRate = rate_hz * 12;  // 转换到内部格式 Hz×12
 	}
 }
 

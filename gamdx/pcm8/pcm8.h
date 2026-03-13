@@ -28,14 +28,6 @@ class Pcm8 {
 	int Pcm16VolumeShift;  // 16-bit PCM 音量右移位数（参照 MDXWin PCMS16_Volume）
 	int DriverMode;        // 0=PCM8PP, 1=PCM8A（运行时通过预扫描 MDX 决定）
 
-	// 可变频率 PCM 支持（方案 B：播放器重定向）
-	int  VariableMode;       // 0=普通模式, 1=可变频率激活
-	int  VariableBaseRate;   // 基准频率 (Hz×12)
-	int  VariableBaseNote;   // 首次播放的 slot 号（基准音符）
-	void *VariableBaseAddr;  // 首次播放的数据地址（重定向用）
-	int  VariableBaseLen;    // 首次播放的数据长度
-	int  VariableHasBase;    // 0=尚未捕获 base, 1=已捕获
-
 	unsigned char DmaLastValue;
 	unsigned char AdpcmReg;
 
@@ -57,6 +49,25 @@ class Pcm8 {
 
 public:
 
+	// ── 可变频率 PCM 状态（方案 B：播放器重定向） ──
+	struct VariableState {
+		int   mode;          // 0=普通模式, 1=可变频率激活
+		int   baseRate;      // 基准频率 (Hz×12)
+		int   baseNote;      // 基准样本 slot 号（基准音符）
+		int   pendingNote;   // mode-set 时暂存的基准音符
+		void *baseAddr;      // 首次播放的数据地址（重定向用）
+		int   baseLen;       // 首次播放的数据长度
+		int   hasBase;       // 0=未捕获, 1=已捕获
+		int   baseBank;      // 捕获时 bank 号（bank 变化时需重新捕获）
+
+		void Clear() {
+			mode = 0; hasBase = 0; pendingNote = 0;
+			baseAddr = 0; baseLen = 0; baseBank = -1;
+		}
+		void ResetBase() { hasBase = 0; pendingNote = 0; baseBank = -1; }
+		bool IsReady() const { return mode && hasBase; }
+	} Var;
+
 	Pcm8(void);
 	~Pcm8() {};
 	void Init();
@@ -70,11 +81,13 @@ public:
 	int GetDriverMode();
 	int GetRest();
 	int GetMode();
-	void SetVariableFreq(int note);  // 可变频率：根据 note 算 AdpcmRate
-	void SetVariableBaseRate(int rate_hz);  // 从 PDX 元数据设置可变频率基准采样率
-	bool IsVariableMode() const { return VariableMode != 0; }  // 查询是否处于可变频率模式
-	bool IsVariableRedirectReady() const { return VariableMode && VariableHasBase; }  // 查询可变频率重定向是否就绪
-	void SoftStop();  // 停止当前播放但保留 Variable 模式状态
+	// ── 可变频率 PCM 公共接口 ──
+	void SetVariableFreq(int note);           // 根据 note 偏移计算 AdpcmRate
+	void SetVariableBaseRate(int rate_hz);    // 设置可变频率基准采样率
+	bool IsVariableMode() const { return Var.mode != 0; }
+	bool IsVariableRedirectReady() const { return Var.IsReady(); }
+	bool IsModeCodeVariable(int mode_byte) const;
+	void SoftStop();  // 停止播放但保留 Variable 模式状态
 
 	int GetPcm22();
 	int GetPcm62();

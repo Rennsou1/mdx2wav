@@ -4608,9 +4608,13 @@ L000eb2:;
 	pcm_slot = D0;  // 保存 slot 号（可变频率 PCM 用）
 #ifdef PCM8_DEBUG
 	fprintf(stderr, "[MXDRV PCM] note S0012=0x%04X pcm_slot=%d VarReady=%d\n",
-		A6->S0012, pcm_slot, PCM8.IsVariableRedirectReady() ? 1 : 0);
+		A6->S0012, pcm_slot, PCM8.IsVariableRedirectReady(0) ? 1 : 0);
 #endif
 	D2 = A6->S001c;
+#ifdef PCM8_DEBUG
+	fprintf(stderr, "[MXDRV PCM NOTE] ch=%d(D7) S001c=0x%02X S0018=0x%02X bank=%d\n",
+		(int)D7, (int)A6->S001c, (int)A6->S0018, (int)A6->S0004_b);
+#endif
 	D1 = D2;
 	D1 &= 0x0003;
 	if ( D1 == 0 ) goto L000ed8;
@@ -4674,9 +4678,9 @@ L000ef4:;
 		// 可变频率模式：空 slot 处理
 #ifdef PCM8_DEBUG
 		fprintf(stderr, "[MXDRV PCM] slot=%d D3=0 (empty) VarReady=%d\n",
-			pcm_slot, PCM8.IsVariableRedirectReady() ? 1 : 0);
+			pcm_slot, PCM8.IsVariableRedirectReady(0) ? 1 : 0);
 #endif
-		if ( PCM8.IsVariableRedirectReady() ) {
+		if ( PCM8.IsVariableRedirectReady(0) ) {
 			// base 已捕获：重定向（0xFF 跳过 SetMode 的频率/音量覆盖）
 			// 注意: ADPCMOUT 内部会加 0x00ff0000，所以 vol 字节设 0x00（加后变 0xFF=skip）
 			ADPCMMOD_END();
@@ -4778,32 +4782,61 @@ L000f28:;
 	A0 = A1+D0;
 	D3 = GETBLONG( A0+4 );
 	if ( D3 == 0 ) {
-		// 可变频率模式：空 slot 处理
-		if ( PCM8.IsVariableRedirectReady() ) {
-			// base 已捕获：重定向（0xFF 跳过 SetMode 的频率/音量覆盖）
-			D0 = A6->S0018;
-			D0 &= 0x07;
-			D1 = 0x00FFFF00 | (D2 & 0x03);  // vol=skip, freq=skip, pan=保留
-			D1 |= ((pcm_slot & 0xFF) << 24);
-			D2 = 0;  // len=0 → Pcm8::Out 用 VariableBase 重定向
-			PCM8_SUB();
-			A2 = &G.L00223c[0];
-			A2[0x0008] = CLR;
-			A2 = &G.L001bb4[0];
-			A2[D7] = CLR;
-		} else if ( PCM8.IsVariableMode() ) {
-			// base 未捕获：扫描同 bank 内的所有 slot 找第一个有数据的
+		// ── 可变频率模式：空 slot 处理 ──
+		// 获取当前 PCM 通道号
+		int pcm_ch = A6->S0018 & 0x07;
+		// 从 D2 提取模式码字节 (bits [13:8] → mode_byte)
+		int mode_byte = (D2 >> 8) & 0x3F;
+#ifdef PCM8_DEBUG
+		fprintf(stderr, "[MXDRV PCM EXT] empty slot ch=%d pcm_ch=%d mode_byte=0x%02X VarMode=%d VarReady=%d\n",
+			(int)D7, pcm_ch, mode_byte,
+			PCM8.IsVariableMode(pcm_ch) ? 1 : 0,
+			PCM8.IsVariableRedirectReady(pcm_ch) ? 1 : 0);
+#endif
+
+		// 乐器切换检测：如果模式码不再是 Variable（如 @1→@2），
+		// 清除 Variable 状态，走正常路径（空 slot = 静音）
+		if ( !PCM8.IsModeCodeVariable(pcm_ch, mode_byte) ) {
+			if ( PCM8.IsVariableMode(pcm_ch) ) {
+				PCM8.ClearVariableState(pcm_ch);
+			}
+			goto L000f26;  // 非 Variable 模式的空 slot → 静音
+		}
+
+		int current_bank = (int)(A6->S0004_b);
+
+		if ( PCM8.IsVariableRedirectReady(pcm_ch) ) {
+			// bank 变化检测：如果当前 bank 与 base 捕获时的 bank 不同（乐器切换），
+			// 重置 base 让 base-scan 从新 bank 重新捕获采样
+			if ( PCM8.GetVariableBaseBank(pcm_ch) != current_bank ) {
+				PCM8.ResetVariableBase(pcm_ch);
+				// fall through 到 base-scan 路径
+			} else {
+				// 同 bank：正常重定向
+				D0 = pcm_ch;
+				D1 = 0x00FFFF00 | (D2 & 0x03);  // vol=skip, freq=skip, pan=保留
+				D1 |= ((pcm_slot & 0xFF) << 24);
+				D2 = 0;  // len=0 → Pcm8::Out 用 VariableBase 重定向
+				PCM8_SUB();
+				A2 = &G.L00223c[0];
+				A2[0x0008] = CLR;
+				A2 = &G.L001bb4[0];
+				A2[D7] = CLR;
+			}
+		}
+		if ( !PCM8.IsVariableRedirectReady(pcm_ch) && (PCM8.IsVariableMode(pcm_ch) || PCM8.IsModeCodeVariable(pcm_ch, mode_byte)) ) {
+			// Variable 模式已激活但 base 未捕获，或模式码指示应进入 Variable 模式
+			// 扫描同 bank 内的所有 slot 找第一个有数据的
 			// 用它触发首次播放（捕获 base），当前音符作为 note 进行音高计算
-			int bank_base = (int)(A6->S0004_b);
 			UBYTE *pdx_base = (UBYTE *)G.L00222c;
 			for (int scan = 0; scan < 96; scan++) {
-				int idx = scan + bank_base * 96;
+				int idx = scan + current_bank * 96;
 				UBYTE *entry = pdx_base + idx * 8;
 				ULONG scan_len = GETBLONG(entry + 4);
 				if (scan_len != 0) {
 #ifdef PCM8_DEBUG
-					fprintf(stderr, "[MXDRV PCM] Variable base scan: found slot=%d (bank=%d) len=%u\n",
-						scan, bank_base, scan_len);
+					fprintf(stderr, "[MXDRV PCM EXT] Variable base scan: found slot=%d (bank=%d) len=%u\n",
+						scan, current_bank, scan_len);
 #endif
 					// 按照正常播放路径的格式设置寄存器
 					A1 = pdx_base + GETBLONG(entry);  // 数据地址
@@ -4821,19 +4854,23 @@ L000f28:;
 					// 组装 mode word: D1=volume<<16 | mode | slot<<24
 					D1 <<= 16;
 					D1 |= (D2 & 0xffff);  // D2 保留着之前计算的 mode bits
-					D1 |= ((pcm_slot & 0xFF) << 24);
+					D1 |= ((scan & 0xFF) << 24);  // 用样本所在 slot 号作为 baseNote（非播放音符）
 
-					// 第一次 PCM8_SUB: mode 设置（len=0 → Pcm8::Out 内部不播放）
-					D0 = A6->S0018;
-					D0 &= 0x07;
+					// 第一次 PCM8_SUB: mode 设置（len=0 → Pcm8::Out 内部激活 Variable 模式）
+					D0 = pcm_ch;
 					D2 = 0;
 					PCM8_SUB();
 
-					// 第二次 PCM8_SUB: 数据播放
-					D0 = A6->S0018;
-					D0 &= 0x07;
+					// 第二次 PCM8_SUB: 数据播放（base 捕获 + 正确音高）
+					// note 从 scan (baseNote) 切换为 pcm_slot (播放音符)
+					// Pcm8 内部用 PendingBaseNote(=scan) 作为 VariableBaseNote
+					D0 = pcm_ch;
+					D1 = (D1 & 0x00FFFFFF) | ((pcm_slot & 0xFF) << 24);
 					D2 = scan_len & 0xffffff;
 					PCM8_SUB();
+
+					// 记录当前 bank（redirect 时用于 bank 变化检测）
+					PCM8.SetVariableBaseBank(pcm_ch, current_bank);
 
 					A2 = &G.L00223c[0];
 					A2[0x0008] = CLR;
@@ -4993,6 +5030,13 @@ L001012:;
 	if ( G.L001df4 == 0 ) goto L00103c;
 	D0 = A6->S0018;
 	D0 &= 0x0007;
+	// Variable 模式保护：D2 来自 L000ff6 中的 S001c 移位结果，
+	// 包含通道号和旧模式位的混合值，不是有效的 Variable 模式码。
+	// 修正 D2 为 freq=0xFF(跳过) | pan，防止 SetMode 覆盖 PcmKind/AdpcmRate，
+	// 但允许音量更新通过（如相对音量指令 (N ）
+	if ( PCM8.IsVariableMode(D0) ) {
+		D2 = 0xFF00 | (D2 & 0x03);  // freq=0xFF(skip), pan=保留
+	}
 	D1 = 0x00;
 	D1 = A6->S0022;
 	D1 <<= 16;

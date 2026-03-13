@@ -68,6 +68,14 @@ void X68PCM8::Reset()
 //
 int X68PCM8::Out(int ch, void *adrs, int mode, int len)
 {
+#ifdef PCM8_DEBUG
+	int real_ch = ch & (PCM8_NCH-1);
+	int note = (mode >> 24) & 0xFF;
+	int freq_mode = (mode >> 8) & 0xFF;
+	int pan = mode & 0x03;
+	fprintf(stderr, "[X68PCM8::Out] ch=%d(raw=%d) adrs=%p mode=0x%08X len=%d note=%d freq_mode=0x%02X pan=%d\n",
+		real_ch, ch, adrs, mode, len, note, freq_mode, pan);
+#endif
 	return mPcm8[ch & (PCM8_NCH-1)].Out(adrs, mode, len);
 }
 
